@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai2pixelart"
+version = "0.1.0"
+description = "Turn AI-generated pseudo pixel art into pixel-perfect, palette-clean pixel art"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-image",
+    "pillow",
+    "click",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+gen = ["torch", "diffusers", "transformers", "accelerate", "safetensors", "peft"]
+
+[project.scripts]
+ai2pixelart = "ai2pixelart.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ai2pixelart = ["viewer.html"]

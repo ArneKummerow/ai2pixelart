@@ -1,0 +1,9 @@
+# Reproduce with: conda env create -f environment.yml
+name: ai2pixelart
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -e .[dev,gen]

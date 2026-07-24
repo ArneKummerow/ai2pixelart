@@ -1,0 +1,719 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai2pixelart — workspace</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0f1115; color: #d7dae0; font: 13px/1.5 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  select, input[type=number], input[type=text] { background: #171a21; color: #d7dae0; border: 1px solid #333a4a; border-radius: 6px; padding: 3px 6px; font: inherit; }
+  input[type=range] { accent-color: #3b82f6; }
+  button { background: #232837; color: #d7dae0; border: 1px solid #333a4a; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
+  button:hover { border-color: #4a5468; }
+  button.on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  button:disabled { opacity: .4; cursor: default; }
+
+  #topbar { display: flex; gap: 10px; align-items: center; padding: 7px 12px; border-bottom: 1px solid #232837; }
+  #status { flex: 1; color: #9fb0cc; font-size: 12px; white-space: nowrap; overflow-x: hidden; text-overflow: ellipsis; }
+  #status.err { color: #ff7a7a; font-weight: 600; }
+
+  #row { flex: 1; display: flex; min-height: 0; }
+  .side { display: flex; flex-direction: column; min-height: 0; background: #12151b; flex: 0 0 auto; }
+  #left { width: 280px; border-right: 1px solid #232837; }
+  #right { width: 330px; border-left: 1px solid #232837; }
+  .sizer { flex: 0 0 6px; cursor: col-resize; position: relative; touch-action: none; }
+  .sizer:hover::after, .sizer.active::after { content: ""; position: absolute; inset: 0 2px; background: #3b82f6; border-radius: 2px; }
+  .side.collapsed { width: 26px !important; }
+  .side.collapsed > *:not(.shead) { display: none; }
+  .shead { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid #232837; color: #8a90a0; font-size: 12px; }
+  .side.collapsed .shead { border-bottom: none; padding: 5px 3px; justify-content: center; }
+  .side.collapsed .shead .stitle { display: none; }
+  .shead .stitle { flex: 1; }
+  .shead .fold { background: none; border: none; color: #8a90a0; padding: 0 4px; font-size: 13px; }
+  .shead .fold:hover { color: #d7dae0; }
+
+  #center { flex: 1; position: relative; display: flex; gap: 4px; min-width: 0; background: #0a0c10; }
+  .runbar { position: absolute; top: 0; left: 0; right: 0; height: 3px; overflow: hidden; visibility: hidden; z-index: 6; }
+  #center.pending .runbar { visibility: visible; }
+  .runbar::after { content: ""; position: absolute; top: 0; bottom: 0; width: 35%;
+                   background: #3b82f6; border-radius: 2px; animation: runslide 1.1s linear infinite; }
+  @keyframes runslide { from { left: -35%; } to { left: 100%; } }
+  #center.pending img.out { opacity: .55; transition: opacity .2s; }
+
+  #viewctl { position: absolute; top: 8px; right: 8px; z-index: 5; display: flex; gap: 6px; align-items: center;
+             background: rgba(18,21,27,.9); border: 1px solid #2a3040; border-radius: 8px; padding: 4px 6px; }
+  #viewctl .zl { min-width: 44px; text-align: center; color: #8a90a0; font-size: 12px; }
+  #srcbadge { position: absolute; top: 8px; left: 8px; z-index: 5; background: rgba(18,21,27,.9);
+              border: 1px solid #2a3040; border-radius: 8px; padding: 3px 10px; color: #8a90a0; font-size: 12px; }
+  body.swap #srcbadge { color: #ffd479; }
+
+  .imgwrap { flex: 1; overflow: auto; display: grid; place-items: center; cursor: grab; touch-action: none; min-width: 0; }
+  .imgwrap.panning { cursor: grabbing; }
+  .pximg { image-rendering: pixelated; display: none; }
+  .imgwrap .cap { display: none; }
+  #center.sbs .imgwrap { border: 1px solid #1c2130; position: relative; }
+  #center.sbs .imgwrap .cap { display: block; position: absolute; top: 6px; left: 8px; color: #667; font-size: 11px; z-index: 2; }
+  .imgwrap.loaded img.out { display: block; }
+  .imgwrap.loaded .note { display: none; }
+  .note { padding: 20px; color: #667; text-align: center; }
+  /* swap mode: one wrap holding both imgs */
+  #center.single .imgwrap img.orig { display: none; }
+  body.swap #center.single .imgwrap.loaded img.out { display: none; }
+  body.swap #center.single .imgwrap.loaded img.orig { display: block; }
+
+  .form { padding: 8px 10px 8px 8px; display: grid; grid-template-columns: minmax(78px, auto) minmax(0, 1fr); gap: 5px 8px; align-items: center; }
+  .form label { color: #8a90a0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .form > select, .form > input[type=text] { min-width: 0; width: 100%; }
+  .form .pair { display: flex; gap: 6px; align-items: center; min-width: 0; }
+  .form .pair input[type=range] { flex: 1 1 40px; min-width: 30px; }
+  .form .pair input[type=number] { flex: 0 0 56px; width: 56px; }
+  .form .pair .granv { flex: 0 0 56px; text-align: center; color: #9fb0cc; }
+  .form input:disabled { opacity: .35; }
+  #paramsbox { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+  #statsbox { flex: 0 0 auto; max-height: 45%; overflow: auto; border-top: 1px solid #232837; padding: 8px; }
+
+  .gallery { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .gallery.drop { outline: 2px dashed #3b82f6; outline-offset: -4px; }
+  .gtools { display: flex; gap: 8px; align-items: center; padding: 8px; border-bottom: 1px solid #232837; }
+  .gtools .hint { color: #667; font-size: 11px; }
+  .thumbs { flex: 1; overflow: auto; padding: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; align-content: start; }
+  .thumb { cursor: pointer; border: 2px solid transparent; border-radius: 8px; padding: 3px; background: #0a0c10; }
+  .thumb:hover { border-color: #3a4256; }
+  .thumb.sel { border-color: #3b82f6; }
+  .thumb img { width: 100%; display: block; border-radius: 5px; }
+  .thumb .tname { font-size: 11px; color: #8a90a0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 2px; }
+  .thumb .tname span { color: #566; }
+
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 2px 8px; text-align: right; border-bottom: 1px solid #232837; font-size: 12px; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; color: #8a90a0; font-weight: 500; }
+  th { color: #8a90a0; font-weight: 500; }
+
+  .colorpop { position: absolute; inset: 0; z-index: 8; background: rgba(10,12,16,.97); overflow: auto; padding: 12px; }
+  .colorpop .cphead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #9fb0cc; }
+  .colorpop .cphead .x { margin-left: auto; background: none; border: none; color: #8a90a0; font-size: 15px; cursor: pointer; }
+  .colorpop .cphead .x:hover { color: #f66; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
+  .sw { border: 1px solid #2a3040; border-radius: 6px; overflow: hidden; cursor: copy; background: #14171e; }
+  .sw .c { height: 32px; }
+  .sw .t { font-size: 10px; color: #8a90a0; padding: 2px 4px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <button class="dl" title="download output" onclick="downloadResult()" disabled>⬇ download</button>
+  <button class="cc" title="count distinct colors of the output" onclick="toggleColors()" disabled>🎨 palette</button>
+  <span id="status">—</span>
+</div>
+<div id="row">
+  <div class="side" id="left">
+    <div class="shead"><button class="fold" onclick="toggleSide('left')">⟨⟨</button><span class="stitle">workspace</span></div>
+  </div>
+  <div class="sizer" data-side="left"></div>
+  <div id="center" class="single">
+    <div class="runbar"></div>
+    <div id="srcbadge">output</div>
+    <div id="viewctl">
+      <button id="modebtn" onclick="toggleView()" title="switch between side-by-side and swap view">side-by-side</button>
+      <button onclick="setFit()" title="fit to window (0)">fit</button>
+      <button onclick="setZoomF(1)" title="pixel-perfect: 1 image pixel = 1 screen pixel">100%</button>
+      <span class="zl" id="zoomlabel">fit</span>
+    </div>
+  </div>
+  <div class="sizer" data-side="right"></div>
+  <div class="side" id="right">
+    <div class="shead"><span class="stitle">parameters</span><button class="fold" onclick="toggleSide('right')">⟩⟩</button></div>
+    <div id="paramsbox"></div>
+    <div id="statsbox"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const DEFAULTS = { granularity: 1, merge_de: 3.0, keep_frac: 0.34, absorb_de: "", absorb_frac: 0.05, pitch: "", max_colors: "", palette: "", leash: "", denoise: true, smooth: true, consensus: false };
+const GRAN = [1 / 3, 1 / 2, 1, 2, 3, 4];
+const SLIDERS = [
+  ["merge_de", "merge ΔE", 0.5, 20, 0.5],
+  ["keep_frac", "cell window", 0.1, 1, 0.02],
+  ["absorb_frac", "absorb frac", 0, 0.3, 0.01],
+];
+const OPTIONAL = [
+  ["pitch", "pitch", 1.6, 16, 0.05, 5],
+  ["max_colors", "colors", 2, 128, 1, 16],
+  ["absorb_de", "absorb ΔE", 0, 40, 1, 15],
+];
+
+let IMAGES = [], PRESETS = [], NN_MODELS = [];
+let state = { image: null, preset: "classical", params: { ...DEFAULTS }, view: "single", left: true, right: true, leftW: 280, rightW: 330, zoomF: null };
+let swap = false;
+let result = null;   // {image, info, key}
+let rt = { timer: null, token: 0, pending: false, error: null };
+
+init();
+async function init() {
+  await refreshImages();
+  loadState();
+  if (!state.image || !IMAGES.some(i => i.name === state.image)) state.image = IMAGES.length ? IMAGES[0].name : null;
+  render();
+}
+
+async function refreshImages() {
+  const d = await fetch("/api/images").then(r => r.json());
+  IMAGES = d.images; PRESETS = d.presets; NN_MODELS = d.nn_models || [];
+}
+
+function saveState() { localStorage.setItem("a2p-workspace-v4", JSON.stringify(state)); }
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem("a2p-workspace-v4"));
+    if (!s || typeof s.params !== "object") return;
+    state = { ...state, ...s, params: { ...DEFAULTS, ...s.params } };
+    if (!(typeof state.zoomF === "number" && state.zoomF > 0)) state.zoomF = null;
+  } catch (e) {}
+}
+
+function imgEntry() { return IMAGES.find(i => i.name === state.image); }
+function imgURL(name) { return "/img/" + encodeURIComponent(name); }
+
+// ---------- layout ----------
+
+function render() {
+  renderGallery();
+  renderParams();
+  renderCenter();
+  renderStats();
+  document.getElementById("left").classList.toggle("collapsed", !state.left);
+  document.getElementById("right").classList.toggle("collapsed", !state.right);
+  applySidebarWidths();
+  document.getElementById("modebtn").textContent = state.view === "single" ? "side-by-side" : "swap view";
+  applyZoomAll();
+  updateSwapUI();
+  paintResult();
+  runClean();
+}
+
+function toggleSide(which) {
+  state[which] = !state[which];
+  saveState();
+  document.getElementById(which).classList.toggle("collapsed", !state[which]);
+}
+
+function applySidebarWidths() {
+  document.getElementById("left").style.width = state.leftW + "px";
+  document.getElementById("right").style.width = state.rightW + "px";
+}
+
+document.querySelectorAll(".sizer").forEach(sz => {
+  sz.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sz.setPointerCapture(e.pointerId);
+    sz.classList.add("active");
+    const which = sz.dataset.side, key = which + "W";
+    const start = e.clientX, w0 = state[key];
+    const move = ev => {
+      const d = ev.clientX - start;
+      state[key] = Math.max(160, Math.min(620, which === "left" ? w0 + d : w0 - d));
+      applySidebarWidths();
+    };
+    const stop = () => { sz.classList.remove("active"); sz.removeEventListener("pointermove", move); saveState(); };
+    sz.addEventListener("pointermove", move);
+    sz.addEventListener("pointerup", stop, { once: true });
+    sz.addEventListener("pointercancel", stop, { once: true });
+  });
+});
+function toggleView() {
+  state.view = state.view === "single" ? "sbs" : "single";
+  saveState(); render();
+}
+function toggleSwap() {
+  swap = !swap;
+  updateSwapUI();
+}
+function updateSwapUI() {
+  document.body.classList.toggle("swap", swap);
+  const badge = document.getElementById("srcbadge");
+  badge.textContent = state.view === "sbs" ? "original | output" : (swap ? "original (Space)" : "output (Space)");
+}
+
+function renderCenter() {
+  const c = document.getElementById("center");
+  c.querySelectorAll(".imgwrap").forEach(el => el.remove());
+  c.querySelector(".colorpop")?.remove();
+  c.classList.toggle("single", state.view === "single");
+  c.classList.toggle("sbs", state.view === "sbs");
+  if (state.view === "single") {
+    c.appendChild(imgWrap("both"));
+  } else {
+    c.appendChild(imgWrap("orig"));
+    c.appendChild(imgWrap("out"));
+  }
+}
+
+function imgWrap(kind) {
+  const wrap = document.createElement("div");
+  wrap.className = "imgwrap";
+  const cap = kind === "orig" ? "original" : kind === "out" ? "output" : "";
+  wrap.innerHTML = `<span class="cap">${cap}</span><div class="note">${state.image ? "running…" : "workspace is empty — add images on the left"}</div>
+    <img class="pximg out"><img class="pximg orig">`;
+  if (state.image) {
+    if (kind !== "out") wrap.querySelector("img.orig").src = imgURL(state.image);
+    if (kind === "orig") { wrap.querySelector("img.out").src = imgURL(state.image); wrap.classList.add("loaded"); }
+  }
+  wireImgWrap(wrap);
+  return wrap;
+}
+
+// ---------- zoom + pan (shared across wraps) ----------
+
+function baseW() { const im = imgEntry(); return im ? im.width : 100; }
+function fitScale(wrap) {
+  const r = wrap.getBoundingClientRect();
+  const im = imgEntry();
+  if (!im || !r.width) return 1;
+  return Math.min(r.width / im.width, r.height / im.height);
+}
+function curScale(wrap) { return state.zoomF != null ? state.zoomF : fitScale(wrap); }
+function setFit() { state.zoomF = null; applyZoomAll(); saveState(); }
+function setZoomF(f) { state.zoomF = Math.max(0.05, Math.min(64, f)); applyZoomAll(); saveState(); }
+function applyZoomAll() {
+  document.querySelectorAll(".imgwrap").forEach(wrap => {
+    const w = baseW() * curScale(wrap);
+    wrap.querySelectorAll(".pximg").forEach(img => img.style.width = w + "px");
+  });
+  document.getElementById("zoomlabel").textContent =
+    state.zoomF == null ? "fit" : Math.round(state.zoomF * 100) + "%";
+}
+
+let syncing = false;
+function syncScroll(srcEl) {
+  if (syncing) return;
+  syncing = true;
+  document.querySelectorAll(".imgwrap").forEach(el => {
+    if (el !== srcEl) { el.scrollLeft = srcEl.scrollLeft; el.scrollTop = srcEl.scrollTop; }
+  });
+  syncing = false;
+}
+
+function wireImgWrap(wrap) {
+  wrap.addEventListener("scroll", () => syncScroll(wrap));
+  wrap.addEventListener("wheel", e => {
+    e.preventDefault();
+    const s0 = curScale(wrap);
+    const s1 = Math.max(0.05, Math.min(64, s0 * Math.exp(-e.deltaY * 0.0015)));
+    const r = wrap.getBoundingClientRect();
+    const ax = e.clientX - r.left + wrap.scrollLeft, ay = e.clientY - r.top + wrap.scrollTop;
+    state.zoomF = s1;
+    applyZoomAll();
+    const k = s1 / s0;
+    const nl = ax * k - (e.clientX - r.left), nt = ay * k - (e.clientY - r.top);
+    document.querySelectorAll(".imgwrap").forEach(el => { el.scrollLeft = nl; el.scrollTop = nt; });
+    saveState();
+  }, { passive: false });
+  wrap.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    wrap.setPointerCapture(e.pointerId);
+    wrap.classList.add("panning");
+    const sx = wrap.scrollLeft + e.clientX, sy = wrap.scrollTop + e.clientY;
+    const move = ev => { wrap.scrollLeft = sx - ev.clientX; wrap.scrollTop = sy - ev.clientY; };
+    const stop = () => { wrap.removeEventListener("pointermove", move); wrap.classList.remove("panning"); };
+    wrap.addEventListener("pointermove", move);
+    wrap.addEventListener("pointerup", stop, { once: true });
+    wrap.addEventListener("pointercancel", stop, { once: true });
+  });
+  wrap.addEventListener("dblclick", setFit);
+}
+
+// ---------- gallery (left sidebar) ----------
+
+function renderGallery() {
+  const side = document.getElementById("left");
+  side.querySelector(".gallery")?.remove();
+  const div = document.createElement("div");
+  div.className = "gallery";
+  div.innerHTML = `<div class="gtools">
+      <button onclick="this.nextElementSibling.click()">add images…</button>
+      <input type="file" accept="image/*" multiple hidden onchange="uploadFiles(this.files); this.value='';">
+      <span class="hint">or drop files here</span>
+    </div>
+    <div class="thumbs"></div>`;
+  const thumbs = div.querySelector(".thumbs");
+  if (!IMAGES.length) thumbs.innerHTML = `<div class="note" style="grid-column:1/-1">workspace is empty — drop images here</div>`;
+  IMAGES.forEach(im => {
+    const t = document.createElement("div");
+    t.className = "thumb" + (im.name === state.image ? " sel" : "");
+    t.innerHTML = `<img loading="lazy" src="${imgURL(im.name)}">
+      <div class="tname">${im.name} <span>${im.width}×${im.height}</span></div>`;
+    t.onclick = () => setImage(im.name);
+    thumbs.appendChild(t);
+  });
+  ["dragenter", "dragover"].forEach(ev => div.addEventListener(ev, e => { e.preventDefault(); div.classList.add("drop"); }));
+  div.addEventListener("dragleave", () => div.classList.remove("drop"));
+  div.addEventListener("drop", e => { e.preventDefault(); div.classList.remove("drop"); uploadFiles(e.dataTransfer.files); });
+  side.appendChild(div);
+}
+
+function setImage(name) {
+  if (!name) return;
+  state.image = name;
+  saveState(); render();
+}
+function stepImage(d) {
+  if (!IMAGES.length) return;
+  const i = Math.max(0, IMAGES.findIndex(im => im.name === state.image));
+  setImage(IMAGES[(i + d + IMAGES.length) % IMAGES.length].name);
+}
+
+async function uploadFiles(files) {
+  let last = null;
+  for (const f of files) {
+    if (!f.type.startsWith("image/")) continue;
+    const data = await new Promise((ok, err) => {
+      const rd = new FileReader();
+      rd.onload = () => ok(rd.result);
+      rd.onerror = () => err(new Error("could not read " + f.name));
+      rd.readAsDataURL(f);
+    });
+    const resp = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: f.name, data }),
+    });
+    const out = await resp.json();
+    if (!resp.ok) { alert("upload failed: " + (out.error || resp.statusText)); continue; }
+    last = out.name;
+  }
+  if (last) { await refreshImages(); setImage(last); }
+}
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+// returning to the tab re-syncs presets/models/images (a neural checkpoint
+// that finished training appears without a reload)
+let lastFocusSync = 0;
+window.addEventListener("focus", async () => {
+  if (Date.now() - lastFocusSync < 10000) return;
+  lastFocusSync = Date.now();
+  const before = JSON.stringify([PRESETS, NN_MODELS, IMAGES.map(i => i.name)]);
+  await refreshImages();
+  if (JSON.stringify([PRESETS, NN_MODELS, IMAGES.map(i => i.name)]) !== before) {
+    renderGallery();
+    renderParams();
+  }
+});
+
+// ---------- parameters (right sidebar, top) ----------
+
+function granLabel(g) { return g < 1 ? "1/" + Math.round(1 / g) + "×" : g + "×"; }
+function granIndex(g) {
+  let best = 0;
+  GRAN.forEach((v, i) => { if (Math.abs(Math.log(g / v)) < Math.abs(Math.log(g / GRAN[best]))) best = i; });
+  return best;
+}
+
+function renderParams() {
+  const box = document.getElementById("paramsbox");
+  box.innerHTML = "";
+  const f = document.createElement("div");
+  f.className = "form";
+  f.insertAdjacentHTML("beforeend", `<label>preset</label>
+    <select onchange="applyPreset(this.value)">
+      ${PRESETS.map(pr => `<option value="${pr.key}" ${state.preset === pr.key ? "selected" : ""}>${pr.label}</option>`).join("")}
+      <option value="custom" ${state.preset === "custom" ? "selected" : ""}>Custom</option>
+    </select>`);
+  if (state.params.method === "nn") {
+    const model = state.params.model || NN_MODELS[0] || "";
+    f.insertAdjacentHTML("beforeend", `<label>model</label>
+      <select onchange="setParam('model', this.value)">
+        ${NN_MODELS.map(m => `<option value="${m}" ${m === model ? "selected" : ""}>${m}</option>`).join("")}
+      </select>`);
+    const off = state.params.leash === "" || state.params.leash == null;
+    const lv = off ? 8 : state.params.leash;
+    f.insertAdjacentHTML("beforeend", `<label title="net may only pick entries at most this ΔE further than the pixel's nearest one"><input type="checkbox" ${off ? "" : "checked"}
+        onchange="setLeash(this)"> color leash</label>
+      <div class="pair">
+        <input type="range" min="1" max="30" step="1" value="${lv}" ${off ? "disabled" : ""} oninput="fromRange('leash', this)">
+        <input type="number" step="1" value="${lv}" ${off ? "disabled" : ""} oninput="fromNumber('leash', this)">
+      </div>`);
+  }
+  const gi = granIndex(+state.params.granularity || 1);
+  f.insertAdjacentHTML("beforeend", `<label title="output resolution relative to the detected grid">granularity</label>
+    <div class="pair">
+      <input type="range" min="0" max="${GRAN.length - 1}" step="1" value="${gi}" oninput="fromGran(this)">
+      <span class="granv">${granLabel(GRAN[gi])}</span>
+    </div>`);
+  SLIDERS.forEach(([key, label, min, max, step]) => {
+    f.insertAdjacentHTML("beforeend", `<label>${label}</label>
+      <div class="pair">
+        <input type="range" min="${min}" max="${max}" step="${step}" value="${state.params[key]}" oninput="fromRange('${key}', this)">
+        <input type="number" min="${min}" max="${max}" step="${step}" value="${state.params[key]}" oninput="fromNumber('${key}', this)">
+      </div>`);
+  });
+  OPTIONAL.forEach(([key, label, min, max, step, dflt]) => {
+    const auto = state.params[key] === "" || state.params[key] == null;
+    const v = auto ? dflt : state.params[key];
+    f.insertAdjacentHTML("beforeend", `<label><input type="checkbox" ${auto ? "checked" : ""}
+        onchange="setAuto('${key}', this, ${dflt})"> ${label} auto</label>
+      <div class="pair">
+        <input type="range" min="${min}" max="${max}" step="${step}" value="${v}" ${auto ? "disabled" : ""} oninput="fromRange('${key}', this)">
+        <input type="number" step="${step}" value="${v}" ${auto ? "disabled" : ""} oninput="fromNumber('${key}', this)">
+      </div>`);
+  });
+  f.insertAdjacentHTML("beforeend", `<label title="explicit output palette, up to 256 colors (overrides colors)">palette</label>
+    <input type="text" placeholder="auto — or #rrggbb,#rrggbb,…" value="${state.params.palette || ""}"
+           style="font-size:11px" onchange="setParam('palette', this.value.trim())">`);
+  f.insertAdjacentHTML("beforeend", `<label><input type="checkbox" ${state.params.denoise ? "checked" : ""}
+      onchange="setParam('denoise', this.checked)"> denoise</label>
+    <label title="detail-guarded mode filter: removes flat-region speckle"><input type="checkbox" ${state.params.smooth !== false ? "checked" : ""}
+      onchange="setParam('smooth', this.checked)"> smooth</label>
+    <label title="global flat-color consensus: regions with near-identical observed color get the same palette entry image-wide"><input type="checkbox" ${state.params.consensus ? "checked" : ""}
+      onchange="setParam('consensus', this.checked)"> consensus</label>`);
+  box.appendChild(f);
+}
+
+function fromGran(el) {
+  const g = GRAN[+el.value];
+  el.parentNode.querySelector(".granv").textContent = granLabel(g);
+  setParam("granularity", g);
+}
+function fromRange(key, el) { el.parentNode.querySelector("input[type=number]").value = el.value; setParam(key, el.value); }
+function fromNumber(key, el) { el.parentNode.querySelector("input[type=range]").value = el.value; setParam(key, el.value); }
+function setLeash(box) {
+  const pair = box.parentNode.nextElementSibling;
+  pair.querySelectorAll("input").forEach(i => i.disabled = !box.checked);
+  setParam("leash", box.checked ? (+pair.querySelector("input[type=number]").value || 8) : "");
+}
+
+function setAuto(key, box, dflt) {
+  const pair = box.parentNode.nextElementSibling;
+  pair.querySelectorAll("input").forEach(i => i.disabled = box.checked);
+  setParam(key, box.checked ? "" : (+pair.querySelector("input[type=number]").value || dflt));
+}
+
+function setParam(key, value) {
+  state.params[key] = value;
+  if (state.preset !== "custom" && key !== "model") {
+    state.preset = "custom";
+    const sel = document.querySelector("#paramsbox select");
+    if (sel) sel.value = "custom";
+  }
+  saveState();
+  clearTimeout(rt.timer);
+  rt.timer = setTimeout(runClean, 300);
+}
+
+function applyPreset(key) {
+  state.preset = key;
+  if (key !== "custom") {
+    const pr = PRESETS.find(x => x.key === key);
+    state.params = { ...DEFAULTS, ...(pr ? pr.params : {}) };
+  }
+  saveState(); render();
+}
+
+function buildParams() {
+  const nn = state.params.method === "nn";
+  const out = nn ? { method: "nn" } : {};
+  for (const [k, v] of Object.entries(state.params)) {
+    if (k === "denoise" || k === "smooth" || k === "consensus") { out[k] = !!v; continue; }
+    if (k === "method") continue;
+    if (v === "" || v == null) continue;
+    if (k === "palette" || k === "model") { out[k] = String(v); continue; }
+    const n = +v;
+    if (!Number.isFinite(n)) continue;
+    if (k === "granularity" && n === 1) continue;
+    out[k] = n;
+  }
+  if (nn && !out.model && NN_MODELS.length) out.model = NN_MODELS[0];
+  return out;
+}
+function keyFor() { return state.image + "|" + JSON.stringify(buildParams()); }
+
+// ---------- run ----------
+
+async function runClean() {
+  if (!state.image) { setStatus(); return; }
+  const params = buildParams(), key = keyFor();
+  if (result && result.key === key) {
+    rt.pending = false; rt.error = null;   // the shown result IS current
+    paintResult();
+    return;
+  }
+  const token = ++rt.token;
+  rt.pending = true; rt.error = null;
+  paintResult();
+  try {
+    const resp = await fetch("/api/clean", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: state.image, params }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    if (token !== rt.token) return;
+    rt.pending = false;
+    result = { image: data.image, info: data.info, key };
+  } catch (e) {
+    if (token !== rt.token) return;
+    rt.pending = false; rt.error = e.message;
+  }
+  paintResult();
+  renderStats();
+}
+
+function setStatus() {
+  const el = document.getElementById("status");
+  let txt = result ? infoLine(result.info) : "—";
+  el.classList.toggle("err", !!rt.error);
+  if (rt.error) txt = "error: " + rt.error;
+  else if (rt.pending) txt = "running…" + (result ? " · showing last result" : "");
+  el.textContent = txt;
+}
+
+function paintResult() {
+  document.getElementById("center").classList.toggle("pending", !!rt.pending);
+  setStatus();
+  document.querySelector("#topbar .dl").disabled = !result;
+  document.querySelector("#topbar .cc").disabled = !result;
+  document.querySelectorAll("#center .imgwrap").forEach(wrap => {
+    const out = wrap.querySelector("img.out");
+    const isOrigPane = wrap.querySelector(".cap")?.textContent === "original";
+    if (isOrigPane) return;
+    if (result && out.dataset.key !== result.key) {
+      out.src = result.image;
+      out.dataset.key = result.key;
+      wrap.classList.add("loaded");
+      applyZoomAll();
+    }
+  });
+}
+
+function fmtGrid(g) { return g ? `${g.pitch_y.toFixed(2)}×${g.pitch_x.toFixed(2)}` : "—"; }
+function infoLine(a) {
+  const nn = a.method === "nn" ? `neural${a.model_step ? " @" + a.model_step + " steps" : ""} · ` : "";
+  return `${nn}${a.out_w}×${a.out_h} · pitch ${fmtGrid(a.grid)} · ${a.palette_size} colors · residual ${a.residual_mean_de} ΔE (p95 ${a.residual_p95_de}) · fit ${a.cell_fit_mean} ΔE · ${a.seconds}s`;
+}
+
+// ---------- stats (right sidebar, bottom) ----------
+
+function renderStats() {
+  const box = document.getElementById("statsbox");
+  const im = imgEntry();
+  if (!im) { box.innerHTML = `<div class="note">no image</div>`; return; }
+  const a = result && result.key === keyFor() ? result.info : null;
+  const rows = [
+    ["input", `${im.width}×${im.height}`],
+    ["input colors", a ? a.input_colors.toLocaleString() : "—"],
+    ["output", a ? `${a.out_w}×${a.out_h}` : "—"],
+    ["pitch", a ? fmtGrid(a.grid) : "—"],
+    ["detection z", a && a.grid && a.grid.z_y != null ? `${a.grid.z_y}/${a.grid.z_x}` : "—"],
+    ["palette", a ? a.palette_size : "—"],
+    ["residual ΔE", a ? `${a.residual_mean_de} (p95 ${a.residual_p95_de})` : "—"],
+    ["fit ΔE", a ? a.cell_fit_mean : "—"],
+    ["time", a ? a.seconds + "s" : "—"],
+  ];
+  box.innerHTML = `<table>${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
+    <div class="note" style="padding:8px 0 0; font-size:11px">residual = cleaned cells painted back vs input;<br>fit = sampled cell vs assigned palette entry (high on neural = the net recolors)</div>`;
+}
+
+// ---------- download + palette count ----------
+
+function downloadResult() {
+  if (!result) return;
+  const src = result.key.split("|")[0].replace(/\.[^.]+$/, "");
+  const tag = (state.preset || "custom").replace(/[^A-Za-z0-9._-]+/g, "-");
+  const a = document.createElement("a");
+  a.href = result.image;
+  a.download = `${src}.${tag}.${result.info.out_w}x${result.info.out_h}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function tallyColors(img) {
+  return img.decode().then(() => {
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    const cx = cv.getContext("2d", { willReadFrequently: true });
+    cx.drawImage(img, 0, 0);
+    const d = cx.getImageData(0, 0, w, h).data;
+    const counts = new Map();
+    for (let i = 0; i < d.length; i += 4) {
+      const k = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return { entries: [...counts.entries()].sort((a, b) => b[1] - a[1]), w, h };
+  });
+}
+
+async function toggleColors() {
+  const center = document.getElementById("center");
+  const old = center.querySelector(".colorpop");
+  if (old) { old.remove(); return; }
+  const img = center.querySelector("img.out[src^='data:'], img.out");
+  if (!img || !img.src || !result) return;
+  const pop = document.createElement("div");
+  pop.className = "colorpop";
+  const headHTML = t => `<div class="cphead">${t}
+    <button class="x" title="close" onclick="this.closest('.colorpop').remove()">✕</button></div>`;
+  pop.innerHTML = headHTML("counting…");
+  center.appendChild(pop);
+  try {
+    const { entries, w, h } = await tallyColors(img);
+    const pixels = w * h, MAX = 256;
+    pop.dataset.total = entries.length;
+    const pct = n => { const v = 100 * n / pixels; return v >= 1 ? v.toFixed(0) + "%" : v >= 0.01 ? v.toFixed(2) + "%" : "<0.01%"; };
+    const cells = entries.slice(0, MAX).map(([c, n]) => {
+      const hex = "#" + c.toString(16).padStart(6, "0");
+      return `<div class="sw" title="${hex} · ${n.toLocaleString()} px · ${pct(n)} — click to copy"
+        onclick="navigator.clipboard && navigator.clipboard.writeText('${hex}')">
+        <div class="c" style="background:${hex}"></div><div class="t">${hex} · ${pct(n)}</div></div>`;
+    }).join("");
+    pop.innerHTML =
+      headHTML(`<b style="color:#d7dae0">${entries.length.toLocaleString()}</b>&nbsp;distinct colors · ${w}×${h} px`) +
+      `<div class="swatches">${cells}</div>` +
+      (entries.length > MAX
+        ? `<div class="note">showing the ${MAX} most frequent · ${(entries.length - MAX).toLocaleString()} more</div>` : "");
+  } catch (e) {
+    pop.innerHTML = headHTML("error: " + e.message);
+  }
+}
+
+// ---------- keyboard + focus policy ----------
+// Space always drives the original/output toggle, except while editing text.
+// Committing any control (Enter in a field, changing a select/checkbox,
+// releasing a slider) blurs it, so Space immediately works again.
+
+function editingText(t) {
+  return t && t.tagName === "INPUT" && (t.type === "text" || t.type === "number");
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.tagName === "INPUT") { e.target.blur(); return; }
+  if (e.code === "Space") {
+    if (editingText(e.target)) return;
+    e.preventDefault();
+    if (!e.repeat) toggleSwap();
+    return;
+  }
+  if (editingText(e.target) || e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowRight") stepImage(1);
+  else if (e.key === "ArrowLeft") stepImage(-1);
+  else if (e.key === "+" || e.key === "=") setZoomF((state.zoomF || 1) * 1.5);
+  else if (e.key === "-") setZoomF((state.zoomF || 1) / 1.5);
+  else if (e.key === "0") setFit();
+});
+document.addEventListener("change", e => {
+  if (e.target.matches("select, input[type=checkbox], input[type=range], input[type=text]")) e.target.blur();
+});
+document.addEventListener("click", e => {
+  const el = e.target.closest("button");
+  if (el) el.blur();
+});
+</script>
+</body>
+</html>

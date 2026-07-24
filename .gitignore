@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+
+# Data and training outputs
+data/
+runs/
+runs_lora/
+examples/
+
+# Model weights
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+
+# Notebooks / editors / OS
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
