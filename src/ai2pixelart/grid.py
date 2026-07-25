@@ -154,7 +154,7 @@ def _rayleigh(pos: np.ndarray, weights: np.ndarray, pitch: float) -> tuple[float
     - the phase estimate is free (the resultant angle) and continuous.
 
     Sub-harmonics (p/2) score as well as p and are handled by the
-    largest-pitch selection rule in estimate_axis_grid.
+    largest-pitch selection rule (_largest) in estimate_grid.
 
     Returns (z, phase) with phase the boundary coordinate in [0, pitch).
     """
@@ -284,16 +284,6 @@ def _largest(near):
     harmonic 2p self-cancels, so the largest near-best pitch is the
     fundamental."""
     return max(near, key=lambda t: t[0])
-
-
-def estimate_axis_grid(
-    img: np.ndarray, axis: int, **kwargs
-) -> AxisGrid | None:
-    """Estimate pitch/phase along one axis. Returns None if no grid is found."""
-    cand = _axis_candidates(img, axis, **kwargs)
-    if cand is None:
-        return None
-    return _axis_grid(cand, _largest(cand[0]))
 
 
 def _harmonic(a: float, b: float, tol: float = 0.05) -> bool:

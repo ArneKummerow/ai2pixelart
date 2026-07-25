@@ -112,7 +112,7 @@ def test_api_server_roundtrip(workspace):
 
         listing = json.loads(urllib.request.urlopen(f"{base}/api/images").read())
         assert [i["name"] for i in listing["images"]] == ["a.png"]
-        assert {p["key"] for p in listing["presets"]} >= {"classical", "classical16"}
+        assert {p["key"] for p in listing["presets"]} >= {"classical"}
 
         raw = urllib.request.urlopen(f"{base}/img/a.png").read()
         assert raw == (workspace / "a.png").read_bytes()
@@ -197,14 +197,45 @@ def test_ckpt_scan_discovers_new_runs_live(workspace, tmp_path):
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
         d = json.loads(urllib.request.urlopen(f"{base}/api/images").read())
-        assert d["nn_models"] == ["va"]
+        assert "va" in d["nn_models"]  # registered hub models may also appear
         (runs / "v9").mkdir()
         (runs / "v9" / "best.ckpt").write_bytes(b"stub")
         d = json.loads(urllib.request.urlopen(f"{base}/api/images").read())
-        assert d["nn_models"] == ["v9", "va"] or set(d["nn_models"]) == {"va", "v9"}
+        assert {"va", "v9"} <= set(d["nn_models"])
         assert any(p["key"] == "nn:v9" for p in d["presets"])
     finally:
         server.shutdown()
+
+
+def test_viewer_serves_registered_hub_models(workspace, tmp_path):
+    """With no local runs, the viewer still offers the registered hub
+    models (downloaded on first use)."""
+    app = ViewerApp(workspace, ckpt_scan=tmp_path / "no_runs")
+    served = app.served_models()
+    assert "robust" in served and "detail" in served
+    # listing must not require a download (offline-safe): version comes from
+    # the pinned revision, not a fetched file
+    assert app.ckpt_version("robust").startswith("robust:")
+
+
+def test_local_run_overrides_hub_model(workspace, tmp_path, monkeypatch):
+    """A locally trained model shadows a same-named hub model, and loading it
+    uses the local file — no hub fetch (the dev-iteration path)."""
+    import ai2pixelart.models as M
+    import ai2pixelart.nninfer as nninfer
+
+    runs = tmp_path / "runs"
+    (runs / "robust").mkdir(parents=True)
+    (runs / "robust" / "best.safetensors").write_bytes(b"local")
+    app = ViewerApp(workspace, ckpt_scan=runs)
+
+    monkeypatch.setattr(M, "download_model",
+                        lambda n: pytest.fail("hub must not be hit when a local run exists"))
+    loaded = []
+    monkeypatch.setattr(nninfer, "load_checkpoint",
+                        lambda p, device: loaded.append(str(p)) or object())
+    app.nn_bits("robust")
+    assert loaded and loaded[0].endswith("runs/robust/best.safetensors")
 
 
 def test_nn_model_hot_reloads_on_ckpt_change(workspace, tmp_path, monkeypatch):

@@ -98,7 +98,7 @@ def train_corruptor_lora(
     log=print,
 ) -> Path:
     """LoRA-finetune the SDXL UNet on the corruption domain; returns the
-    LoRA directory (loadable via `gen-edit-pairs --lora`)."""
+    LoRA directory (loadable via `data edit-pairs --lora`)."""
     import torch
     import torch.nn.functional as F
     from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionXLPipeline

@@ -2,8 +2,8 @@
 
 NOT the training degradation. These simple resampling corruptions exist to
 exercise the classical pipeline and metrics with known ground truth. The
-real data engine (VAE roundtrips, rail-guarded img2img) lives in a later
-milestone and produces the semantically interesting artifacts these cannot.
+real data engine (VAE roundtrips in pairgen.py, rail-guarded img2img in
+imgedit.py) produces the semantically interesting artifacts these cannot.
 """
 
 from __future__ import annotations

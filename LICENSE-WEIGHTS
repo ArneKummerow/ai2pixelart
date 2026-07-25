@@ -1,0 +1,41 @@
+ai2pixelart — trained model weights license
+
+The trained neural network weights distributed with ai2pixelart (the
+"robust" and "detail" checkpoints, and any future models we release) are
+licensed under the Creative Commons Attribution-NonCommercial 4.0
+International License (CC BY-NC 4.0).
+
+  Full legal code: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+  Human-readable summary: https://creativecommons.org/licenses/by-nc/4.0/
+
+You are free to:
+  - Share  — copy and redistribute the weights in any medium or format
+  - Adapt  — remix, transform, and build upon them (e.g. fine-tune)
+
+Under the following terms:
+  - Attribution  — you must give appropriate credit (see the notice
+    below), provide a link to this license, and indicate if changes were
+    made.
+  - NonCommercial — you may not use the weights for commercial purposes.
+
+Attribution notice to reproduce:
+
+  "ai2pixelart" model weights © 2026 Arne Kummerow, licensed under
+  CC BY-NC 4.0.
+
+Additional permission — Output and production use:
+
+  As an exception to the NonCommercial term above, the licensor
+  additionally grants you the right to run these weights to produce pixel
+  art and other images ("Output"), including in a commercial setting and
+  including Output that you sell or license. You own your Output; it
+  carries no noncommercial restriction or attribution requirement. What
+  remains noncommercial-only is the weights themselves — you may not sell
+  or sublicense them, or offer their functionality to others as a paid,
+  subscription, or advertising-supported product, service, platform, or
+  API. Making pixel art with the models and using that art commercially is
+  fine; turning the models themselves into a business is not.
+
+This file covers ONLY the model weights. The ai2pixelart source code is
+licensed separately under the PolyForm Noncommercial License 1.0.0 (with
+the same output carve-out) — see LICENSE.

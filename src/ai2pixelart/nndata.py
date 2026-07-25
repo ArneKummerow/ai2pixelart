@@ -1,4 +1,4 @@
-"""Dataset over gen-pairs output for the restoration net.
+"""Dataset over corruption-pair output for the restoration net.
 
 The training target is exact by construction: pairs.jsonl records the scale
 and phase of each corruption, and the nearest-upscale mapping (matching

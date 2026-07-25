@@ -99,12 +99,33 @@
   .sw { border: 1px solid #2a3040; border-radius: 6px; overflow: hidden; cursor: copy; background: #14171e; }
   .sw .c { height: 32px; }
   .sw .t { font-size: 10px; color: #8a90a0; padding: 2px 4px; white-space: nowrap; }
+
+  .batchpop .bprog { height: 6px; background: #1c2130; border-radius: 3px; overflow: hidden; margin: 4px 0 8px; }
+  .batchpop .bfill { height: 100%; background: #3b82f6; width: 0; transition: width .2s; }
+  .batchpop .bstat { color: #9fb0cc; font-size: 12px; margin-bottom: 10px; }
+  .batchpop .bstat button { margin-left: 8px; }
+  .batchpop .bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  .batchpop .bcell { background: #14171e; border: 1px solid #2a3040; border-radius: 6px; padding: 4px; }
+  .batchpop .bcell img { width: 100%; image-rendering: pixelated; border-radius: 4px; display: block; }
+  .batchpop .bcell .bname { font-size: 10px; color: #8a90a0; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .batchpop .bcell.err { padding: 12px; }
+
+  .form label[title] { cursor: help; text-decoration: underline dotted #4a5468; text-underline-offset: 2px; }
+  .helpbody { max-width: 700px; margin: 0 auto; color: #b6bdc9; font-size: 12.5px; padding-bottom: 24px; }
+  .helpbody h3 { color: #d7dae0; font-size: 13px; margin: 16px 0 6px; border-bottom: 1px solid #232837; padding-bottom: 3px; }
+  .helpbody p { margin: 6px 0; }
+  .helpbody dt { color: #d7dae0; font-weight: 600; margin-top: 9px; }
+  .helpbody dt span { color: #667; font-weight: 400; }
+  .helpbody dd { margin: 1px 0 0 0; }
+  .helpbody code { background: #171a21; border-radius: 4px; padding: 0 4px; }
 </style>
 </head>
 <body>
 <div id="topbar">
   <button class="dl" title="download output" onclick="downloadResult()" disabled>⬇ download</button>
   <button class="cc" title="count distinct colors of the output" onclick="toggleColors()" disabled>🎨 palette</button>
+  <button class="hp" title="explain the approaches and parameters" onclick="toggleHelp()">? help</button>
+  <button class="bt" title="clean every workspace image with the current parameters" onclick="toggleBatch()">▦ batch</button>
   <span id="status">—</span>
 </div>
 <div id="row">
@@ -135,14 +156,20 @@
 const DEFAULTS = { granularity: 1, merge_de: 3.0, keep_frac: 0.34, absorb_de: "", absorb_frac: 0.05, pitch: "", max_colors: "", palette: "", leash: "", denoise: true, smooth: true, consensus: false };
 const GRAN = [1 / 3, 1 / 2, 1, 2, 3, 4];
 const SLIDERS = [
-  ["merge_de", "merge ΔE", 0.5, 20, 0.5],
-  ["keep_frac", "cell window", 0.1, 1, 0.02],
-  ["absorb_frac", "absorb frac", 0, 0.3, 0.01],
+  ["merge_de", "color merging", 0.5, 20, 0.5,
+   "(merge ΔE) shades closer than this color distance become one palette color — higher gives fewer, cleaner colors; lower keeps subtle shades apart"],
+  ["keep_frac", "cell sampling", 0.1, 1, 0.02,
+   "(cell window) how much of each cell's interior is read for its color — smaller ignores bleed from neighboring cells, larger is steadier on noise"],
+  ["absorb_frac", "absorb amount", 0, 0.3, 0.01,
+   "(absorb frac) shades covering less than this share of the image may be swallowed by a similar stronger color — raise to clean up noise shades, lower to protect rare details"],
 ];
 const OPTIONAL = [
-  ["pitch", "pitch", 1.6, 16, 0.05, 5],
-  ["max_colors", "colors", 2, 128, 1, 16],
-  ["absorb_de", "absorb ΔE", 0, 40, 1, 15],
+  ["pitch", "pixel size", 1.6, 16, 0.05, 5,
+   "(pitch) size of one art pixel in image pixels — set manually when detection fails, e.g. on very fine grids under ~2 px"],
+  ["max_colors", "colors", 2, 128, 1, 16,
+   "(max colors) target and cap for the palette size — auto uses the image's natural palette; more splits shades apart, fewer merges them"],
+  ["absorb_de", "absorb range", 0, 40, 1, 15,
+   "(absorb ΔE) how similar a rare shade must be to a stronger color to be swallowed by it — auto adapts to the detected pixel size"],
 ];
 
 let IMAGES = [], PRESETS = [], NN_MODELS = [];
@@ -170,6 +197,7 @@ function loadState() {
     const s = JSON.parse(localStorage.getItem("a2p-workspace-v4"));
     if (!s || typeof s.params !== "object") return;
     state = { ...state, ...s, params: { ...DEFAULTS, ...s.params } };
+    if (state.preset !== "custom" && !PRESETS.some(pr => pr.key === state.preset)) state.preset = "classical";
     if (!(typeof state.zoomF === "number" && state.zoomF > 0)) state.zoomF = null;
   } catch (e) {}
 }
@@ -419,58 +447,58 @@ function renderParams() {
   box.innerHTML = "";
   const f = document.createElement("div");
   f.className = "form";
-  f.insertAdjacentHTML("beforeend", `<label>preset</label>
+  f.insertAdjacentHTML("beforeend", `<label title="how the image is cleaned — see the help button in the top bar for what each approach does">approach</label>
     <select onchange="applyPreset(this.value)">
       ${PRESETS.map(pr => `<option value="${pr.key}" ${state.preset === pr.key ? "selected" : ""}>${pr.label}</option>`).join("")}
       <option value="custom" ${state.preset === "custom" ? "selected" : ""}>Custom</option>
     </select>`);
   if (state.params.method === "nn") {
     const model = state.params.model || NN_MODELS[0] || "";
-    f.insertAdjacentHTML("beforeend", `<label>model</label>
+    f.insertAdjacentHTML("beforeend", `<label title="which trained network assigns the palette colors">model</label>
       <select onchange="setParam('model', this.value)">
         ${NN_MODELS.map(m => `<option value="${m}" ${m === model ? "selected" : ""}>${m}</option>`).join("")}
       </select>`);
     const off = state.params.leash === "" || state.params.leash == null;
     const lv = off ? 8 : state.params.leash;
-    f.insertAdjacentHTML("beforeend", `<label title="net may only pick entries at most this ΔE further than the pixel's nearest one"><input type="checkbox" ${off ? "" : "checked"}
-        onchange="setLeash(this)"> color leash</label>
+    f.insertAdjacentHTML("beforeend", `<label title="(leash) the net may only pick palette colors within this color distance of what is actually in the image — lower is stricter, prevents creative recoloring; try 2–4 with dense fixed palettes, 8 otherwise"><input type="checkbox" ${off ? "" : "checked"}
+        onchange="setLeash(this)"> limit recolor</label>
       <div class="pair">
         <input type="range" min="1" max="30" step="1" value="${lv}" ${off ? "disabled" : ""} oninput="fromRange('leash', this)">
         <input type="number" step="1" value="${lv}" ${off ? "disabled" : ""} oninput="fromNumber('leash', this)">
       </div>`);
   }
   const gi = granIndex(+state.params.granularity || 1);
-  f.insertAdjacentHTML("beforeend", `<label title="output resolution relative to the detected grid">granularity</label>
+  f.insertAdjacentHTML("beforeend", `<label title="(granularity) output resolution relative to the detected pixel grid — 2× keeps twice the detail per axis, ½× merges cells; for when the detected grid is coarser or finer than the art's real pixels">output detail</label>
     <div class="pair">
       <input type="range" min="0" max="${GRAN.length - 1}" step="1" value="${gi}" oninput="fromGran(this)">
       <span class="granv">${granLabel(GRAN[gi])}</span>
     </div>`);
-  SLIDERS.forEach(([key, label, min, max, step]) => {
-    f.insertAdjacentHTML("beforeend", `<label>${label}</label>
+  SLIDERS.forEach(([key, label, min, max, step, tip]) => {
+    f.insertAdjacentHTML("beforeend", `<label title="${tip}">${label}</label>
       <div class="pair">
         <input type="range" min="${min}" max="${max}" step="${step}" value="${state.params[key]}" oninput="fromRange('${key}', this)">
         <input type="number" min="${min}" max="${max}" step="${step}" value="${state.params[key]}" oninput="fromNumber('${key}', this)">
       </div>`);
   });
-  OPTIONAL.forEach(([key, label, min, max, step, dflt]) => {
+  OPTIONAL.forEach(([key, label, min, max, step, dflt, tip]) => {
     const auto = state.params[key] === "" || state.params[key] == null;
     const v = auto ? dflt : state.params[key];
-    f.insertAdjacentHTML("beforeend", `<label><input type="checkbox" ${auto ? "checked" : ""}
+    f.insertAdjacentHTML("beforeend", `<label title="${tip}"><input type="checkbox" ${auto ? "checked" : ""}
         onchange="setAuto('${key}', this, ${dflt})"> ${label} auto</label>
       <div class="pair">
         <input type="range" min="${min}" max="${max}" step="${step}" value="${v}" ${auto ? "disabled" : ""} oninput="fromRange('${key}', this)">
         <input type="number" step="${step}" value="${v}" ${auto ? "disabled" : ""} oninput="fromNumber('${key}', this)">
       </div>`);
   });
-  f.insertAdjacentHTML("beforeend", `<label title="explicit output palette, up to 256 colors (overrides colors)">palette</label>
+  f.insertAdjacentHTML("beforeend", `<label title="(palette) force this exact output palette — every cell becomes one of these colors; near-duplicate entries are merged; overrides the colors control">fixed palette</label>
     <input type="text" placeholder="auto — or #rrggbb,#rrggbb,…" value="${state.params.palette || ""}"
            style="font-size:11px" onchange="setParam('palette', this.value.trim())">`);
-  f.insertAdjacentHTML("beforeend", `<label><input type="checkbox" ${state.params.denoise ? "checked" : ""}
+  f.insertAdjacentHTML("beforeend", `<label title="(denoise) median-filter each cell's pixels before reading its color — steadier flat areas on noisy input"><input type="checkbox" ${state.params.denoise ? "checked" : ""}
       onchange="setParam('denoise', this.checked)"> denoise</label>
-    <label title="detail-guarded mode filter: removes flat-region speckle"><input type="checkbox" ${state.params.smooth !== false ? "checked" : ""}
-      onchange="setParam('smooth', this.checked)"> smooth</label>
-    <label title="global flat-color consensus: regions with near-identical observed color get the same palette entry image-wide"><input type="checkbox" ${state.params.consensus ? "checked" : ""}
-      onchange="setParam('consensus', this.checked)"> consensus</label>`);
+    <label title="(smooth) removes single stray cells inside flat areas with a detail-guarded majority filter — isolated 1-px details survive"><input type="checkbox" ${state.params.smooth !== false ? "checked" : ""}
+      onchange="setParam('smooth', this.checked)"> de-speckle</label>
+    <label title="(consensus) areas with near-identical color get the same palette entry across the whole image — fixes far-apart backgrounds landing on different shades"><input type="checkbox" ${state.params.consensus ? "checked" : ""}
+      onchange="setParam('consensus', this.checked)"> unify areas</label>`);
   box.appendChild(f);
 }
 
@@ -633,6 +661,121 @@ function downloadResult() {
   a.remove();
 }
 
+// ---------- batch: clean every workspace image with the current params ----------
+
+let batchResults = [], batchTag = "";
+
+function toggleBatch() {
+  const center = document.getElementById("center");
+  const existing = center.querySelector(".batchpop");
+  if (existing) { existing.remove(); return; }          // running loop stops via isConnected
+  center.querySelectorAll(".colorpop:not(.batchpop)").forEach(e => e.remove());  // exclusive
+  if (!IMAGES.length) return;
+  const pop = document.createElement("div");
+  pop.className = "colorpop batchpop";
+  pop.innerHTML = `<div class="cphead"><b style="color:#d7dae0">Batch</b>
+    <span style="color:#8a90a0">— ${state.preset} · ${IMAGES.length} images</span>
+    <button class="x" title="close" onclick="this.closest('.batchpop').remove()">✕</button></div>
+    <div class="bprog"><div class="bfill"></div></div>
+    <div class="bstat">starting…</div>
+    <div class="bgrid"></div>`;
+  center.appendChild(pop);
+  runBatch(pop);
+}
+
+async function runBatch(pop) {
+  const params = buildParams();
+  const fill = pop.querySelector(".bfill"), stat = pop.querySelector(".bstat"), grid = pop.querySelector(".bgrid");
+  const results = [];
+  const imgs = IMAGES.slice();
+  for (let i = 0; i < imgs.length; i++) {
+    if (!pop.isConnected) return;                        // closed → abort
+    const im = imgs[i];
+    stat.textContent = `processing ${i + 1}/${imgs.length}: ${im.name}`;
+    fill.style.width = (100 * i / imgs.length) + "%";
+    try {
+      const resp = await fetch("/api/clean", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: im.name, params }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || resp.statusText);
+      results.push({ name: im.name, image: data.image });
+      grid.insertAdjacentHTML("beforeend",
+        `<div class="bcell"><img src="${data.image}"><div class="bname">${im.name}</div></div>`);
+    } catch (e) {
+      results.push({ name: im.name, error: e.message });
+      grid.insertAdjacentHTML("beforeend",
+        `<div class="bcell err"><div class="bname">${im.name}<br><span style="color:#f77">${e.message}</span></div></div>`);
+    }
+  }
+  if (!pop.isConnected) return;
+  fill.style.width = "100%";
+  batchResults = results.filter(r => !r.error);
+  batchTag = (state.preset || "custom").replace(/[^A-Za-z0-9._-]+/g, "-");
+  const errs = results.length - batchResults.length;
+  stat.innerHTML = `done — ${batchResults.length}/${results.length} cleaned${errs ? ` (${errs} failed)` : ""}` +
+    (batchResults.length ? ` <button onclick="downloadBatchZip()">⬇ download all (zip)</button>` : "");
+}
+
+function downloadBatchZip() {
+  const files = batchResults.map(r => ({
+    name: r.name.replace(/\.[^.]+$/, "") + "." + batchTag + ".png",
+    bytes: b64ToBytes(r.image.split(",")[1]),
+  }));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(buildZip(files));
+  a.download = `ai2pixelart.${batchTag}.zip`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function b64ToBytes(b64) {
+  const bin = atob(b64), arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+const _crcTable = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = _crcTable[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+
+function buildZip(files) {
+  return new Blob([zipBytes(files)], { type: "application/zip" });
+}
+
+// minimal ZIP writer (stored / no compression — PNGs are already compressed)
+function zipBytes(files) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.bytes), size = f.bytes.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, size, true); lh.setUint32(22, size, true);
+    lh.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(lh.buffer), name, f.bytes);
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true); cd.setUint16(4, 20, true); cd.setUint16(6, 20, true);
+    cd.setUint32(16, crc, true); cd.setUint32(20, size, true); cd.setUint32(24, size, true);
+    cd.setUint16(28, name.length, true); cd.setUint32(42, offset, true);
+    central.push(new Uint8Array(cd.buffer), name);
+    offset += 30 + name.length + size;
+  }
+  let centralSize = 0; for (const c of central) centralSize += c.length;
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true);
+  eocd.setUint16(8, files.length, true); eocd.setUint16(10, files.length, true);
+  eocd.setUint32(12, centralSize, true); eocd.setUint32(16, offset, true);
+  let total = centralSize + 22; for (const p of parts) total += p.length;
+  const out = new Uint8Array(total); let o = 0;
+  for (const p of [...parts, ...central, new Uint8Array(eocd.buffer)]) { out.set(p, o); o += p.length; }
+  return out;
+}
+
 function tallyColors(img) {
   return img.decode().then(() => {
     const w = img.naturalWidth, h = img.naturalHeight;
@@ -652,7 +795,9 @@ function tallyColors(img) {
 
 async function toggleColors() {
   const center = document.getElementById("center");
-  const old = center.querySelector(".colorpop");
+  const old = center.querySelector(".colorpop:not(.helppop):not(.batchpop)");
+  center.querySelector(".helppop")?.remove();
+  center.querySelector(".batchpop")?.remove();
   if (old) { old.remove(); return; }
   const img = center.querySelector("img.out[src^='data:'], img.out");
   if (!img || !img.src || !result) return;
@@ -681,6 +826,118 @@ async function toggleColors() {
   } catch (e) {
     pop.innerHTML = headHTML("error: " + e.message);
   }
+}
+
+// ---------- help ----------
+
+const HELP_HTML = `
+<h3>Approaches</h3>
+<p>An approach is a starting set of parameters plus the method that does the
+coloring. Touching any parameter switches to <b>Custom</b>, keeping your
+settings — the parameters below apply to every approach.</p>
+<dl>
+<dt>Simple</dt>
+<dd>The classical algorithm, fully deterministic and CPU-only. It detects the
+fake-pixel grid, reads each cell's color robustly, clusters those colors into
+a palette, and snaps every cell to its nearest entry. All output colors are
+taken from the image itself — dominant colors come out byte-exact. Its limit:
+it cannot use context. A 1-pixel detail that arrived blurred keeps its blurred
+mixture color, and heavy noise can split one flat area into several shades.</dd>
+<dt>Neural Robust <span>— recommended</span></dt>
+<dd>The same grid and palette proposal, but a trained network chooses each
+cell's palette entry using shape and context. It learned to invert the way AI
+image models render pixel art, so it can restore what the pixels alone no
+longer contain: tiny details get their true color back (a white eye stays
+pure white), noisy or vignetted backgrounds collapse into the one color a
+pixel artist would have used, and it stays reliable with dense fixed palettes
+and tile sheets. It can only ever output palette colors.</dd>
+<dt>Neural Detail</dt>
+<dd>An alternative network with the strongest retention of single-pixel
+details on very fine grids (art pixels of 2–3 image pixels). Try it when
+Robust simplifies fine art too aggressively.</dd>
+</dl>
+<p>When colors look wrong on a neural approach, compare the <b>fit ΔE</b>
+stat against Simple's: if it is much higher, the network is repainting the
+image and Simple is the safer choice for color fidelity.</p>
+
+<h3>Parameters</h3>
+<p>Controls marked <b>auto</b> let the server pick a measured default —
+untick to override. ΔE is a perceptual color distance: 1 is barely visible,
+5 is clearly distinct.</p>
+<dl>
+<dt>model</dt>
+<dd>Which trained network assigns the colors (neural approaches only).</dd>
+<dt>limit recolor <span>(leash)</span></dt>
+<dd>Caps how far the network may deviate from what is actually in the image:
+each cell may only take palette colors within this ΔE of the observed color.
+Lower = stricter color fidelity, less creative correction. With dense fixed
+palettes 2–4 works well; 8 is a good default otherwise. Off = unlimited.</dd>
+<dt>output detail <span>(granularity)</span></dt>
+<dd>Output resolution relative to the detected pixel grid. 2× keeps twice the
+detail per axis (each detected cell splits in two), ½× merges cells. Use when
+the detection locked onto a coarser or finer grid than the art's real pixels.</dd>
+<dt>color merging <span>(merge ΔE)</span></dt>
+<dd>How different two shades must be to remain separate palette colors.
+Raising it merges near-duplicates into fewer, cleaner colors; lowering it
+preserves subtle shading at the cost of a larger palette.</dd>
+<dt>cell sampling <span>(cell window)</span></dt>
+<dd>How much of each cell's interior is read to determine its color. Smaller
+windows ignore color bleeding from neighboring cells (sharper on wobbly
+grids); larger windows average more pixels (steadier on noise).</dd>
+<dt>absorb amount <span>(absorb frac)</span> · absorb range <span>(absorb ΔE)</span></dt>
+<dd>Cleanup of stray shades: a color covering less than the <i>amount</i>
+share of the image can be swallowed by a stronger color within the
+<i>range</i> ΔE. Raise to remove noise shades, lower to protect rare but
+intentional colors. The auto range adapts to the detected pixel size.</dd>
+<dt>pixel size <span>(pitch)</span></dt>
+<dd>The size of one art pixel in image pixels. Auto-detected; set it manually
+when detection fails — typically on very fine grids (under ~2 image pixels
+per art pixel, which is undetectable in principle) or when decorative
+patterns fool the detector.</dd>
+<dt>colors <span>(max colors)</span></dt>
+<dd>Target and cap for the palette size. Auto uses the image's natural
+palette size. Asking for more splits similar shades back apart (exact count
+whenever the image has that many distinguishable colors); asking for fewer
+merges them.</dd>
+<dt>fixed palette</dt>
+<dd>Forces the exact output palette (hex colors, comma-separated, up to
+256): every cell becomes one of these colors, with both approaches.
+Near-duplicate entries are merged automatically. Note that colors genuinely
+missing from the palette cannot be represented well by any method.</dd>
+<dt>denoise</dt>
+<dd>Median-filters each cell's pixels before reading its color — steadier
+flat areas on noisy input, at a small cost in edge sharpness.</dd>
+<dt>de-speckle <span>(smooth)</span></dt>
+<dd>Removes single stray cells inside flat areas using a majority filter
+with a detail guard: a cell only flips when its neighborhood strongly agrees
+AND the new color also fits the underlying pixels — isolated 1-px details
+survive.</dd>
+<dt>unify areas <span>(consensus)</span></dt>
+<dd>Forces areas with near-identical observed color to the same palette
+entry across the whole image. Fixes far-apart flat regions (e.g. the
+background of separate tiles) landing on different, randomly-decided
+shades. Real color variation stays untouched.</dd>
+</dl>
+
+<h3>Quality signals</h3>
+<p><b>residual ΔE</b> — the cleaned cells painted back onto the input grid,
+compared against the input. A fidelity signal that needs no ground truth;
+note a neural approach that <i>corrects more</i> scores slightly worse here
+by design. <b>fit ΔE</b> — how far the sampled cell colors sit from their
+assigned palette entries; high values on a neural approach mean the network
+is recoloring rather than snapping.</p>`;
+
+function toggleHelp() {
+  const center = document.getElementById("center");
+  const old = center.querySelector(".helppop");
+  center.querySelector(".colorpop:not(.helppop)")?.remove();
+  if (old) { old.remove(); return; }
+  const pop = document.createElement("div");
+  pop.className = "colorpop helppop";
+  pop.innerHTML = `<div class="cphead"><b style="color:#d7dae0">Approaches &amp; parameters</b>
+    <button class="x" title="close" onclick="this.closest('.helppop').remove()">✕</button></div>
+    <div class="helpbody">${HELP_HTML}</div>`;
+  center.appendChild(pop);
 }
 
 // ---------- keyboard + focus policy ----------

@@ -1,12 +1,31 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai2pixelart"
-version = "0.1.0"
+version = "0.1.1"
 description = "Turn AI-generated pseudo pixel art into pixel-perfect, palette-clean pixel art"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "Arne Kummerow", email = "arne.kumero@gmail.com" }]
+# Source code only. The trained model weights are licensed separately under
+# CC BY-NC 4.0 (see LICENSE-WEIGHTS) and are not shipped in the wheel.
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+keywords = ["pixel-art", "image-restoration", "image-to-image", "retro", "gamedev"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
 dependencies = [
     "numpy",
     "scipy",
@@ -16,8 +35,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
-gen = ["torch", "diffusers", "transformers", "accelerate", "safetensors", "peft"]
+# run the trained networks (inference)
+neural = ["torch", "safetensors", "huggingface_hub"]
+# full data engine + training stack (implies neural)
+gen = ["ai2pixelart[neural]", "diffusers", "transformers", "accelerate", "peft"]
+dev = ["ai2pixelart[neural]", "pytest"]
+
+[project.urls]
+Homepage = "https://github.com/ArneKummerow/ai2pixelart"
+Repository = "https://github.com/ArneKummerow/ai2pixelart"
+"Model weights" = "https://huggingface.co/arnekummerow/ai2pixelart"
 
 [project.scripts]
 ai2pixelart = "ai2pixelart.cli:main"

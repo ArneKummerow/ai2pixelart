@@ -1,5 +1,3 @@
-import numpy as np
-
 from ai2pixelart.autoqa import assess, detail_survival, speckle_rate
 from ai2pixelart.corrupt import corrupt, upscale
 from ai2pixelart.pipeline import clean

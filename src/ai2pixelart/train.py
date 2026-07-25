@@ -1,4 +1,4 @@
-"""Training loop for PixelCleanNet on gen-pairs data."""
+"""Training loop for PixelCleanNet on corruption-pair data."""
 
 from __future__ import annotations
 

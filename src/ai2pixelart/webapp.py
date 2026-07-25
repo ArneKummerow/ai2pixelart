@@ -25,6 +25,7 @@ import re
 import threading
 import time
 import urllib.parse
+from collections import OrderedDict
 from importlib import resources
 from pathlib import Path
 
@@ -39,8 +40,7 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 # Named parameter presets offered by the viewer; new entries appear in the
 # panel preset dropdown automatically.
 APPROACHES: dict[str, dict] = {
-    "classical": {"label": "Classical", "params": {}},
-    "classical16": {"label": "Classical 16 colors", "params": {"max_colors": 16}},
+    "classical": {"label": "Simple", "params": {}},
 }
 
 # name -> (parser, min, max); bounds keep API-triggered runs sane
@@ -64,6 +64,16 @@ METHODS = {"classical", "nn"}
 
 CACHE_MAX_ENTRIES = 256
 UPLOAD_MAX_BYTES = 32 * 1024 * 1024
+
+# Neural proposal cache: the classical palette/grid proposal + the net's raw
+# logits depend on these params but NOT on leash/smooth/consensus, so they
+# are reused while the user tweaks those. Logits are large (kept on the
+# compute device), so the cache is a tiny LRU.
+PROPOSAL_PARAM_KEYS = (
+    "max_colors", "palette", "merge_de", "pitch", "granularity",
+    "denoise", "keep_frac", "absorb_de", "absorb_frac",
+)
+PROPOSAL_CACHE_MAX = 2
 
 
 class AppError(ValueError):
@@ -170,8 +180,9 @@ def clean_with_info(
     """Run one cleanup method with API parameters -> (png bytes, info).
 
     method "classical" (default) runs the parametrized classical pipeline;
-    "nn" runs the restoration net (classical params don't apply there — the
-    net's palette/grid proposal is fixed at K_MAX colors).
+    "nn" runs the restoration net on the classical palette/grid proposal
+    (proposal params — max_colors, palette, pitch, granularity — apply
+    there too; the palette defaults to its natural proposal size).
     """
     parsed = _parse_params(params)
     method = parsed.pop("method", "classical")
@@ -179,7 +190,7 @@ def clean_with_info(
     t0 = time.perf_counter()
     if method == "nn":
         if nn_model is None:
-            raise AppError("neural model not available — start `view` with --ckpt")
+            raise AppError("neural model not available — start `viewer` with --model")
         from ai2pixelart.nninfer import nn_clean_image
 
         # every classical param shapes the palette/grid PROPOSAL the net
@@ -209,57 +220,97 @@ class ViewerApp:
         directory: Path,
         ckpts: dict[str, Path] | None = None,
         ckpt_scan: Path | None = None,
+        device: str = "auto",
     ):
         self.directory = Path(directory).resolve()
-        # variant name -> checkpoint path (e.g. "vae" -> runs/vae/best.ckpt);
-        # each becomes a "Neural (<name>)" preset, so future corruption
+        self._device_pref = device  # 'auto' | 'cuda' | 'cpu'
+        # variant name -> checkpoint path (e.g. "robust" -> runs/robust/best.safetensors);
+        # each becomes a "Neural <Name>" preset, so future corruption
         # tracks (img2img, ...) ship as additional named checkpoints
         self.ckpts = {k: Path(v) for k, v in (ckpts or {}).items()}
         # with ckpt_scan set, new runs are picked up while the server lives
         # (a training run finishing appears without a restart)
         self.ckpt_scan = Path(ckpt_scan) if ckpt_scan else None
         self._nn_models: dict[str, object] = {}  # loaded lazily per variant
+        # (sha1, model, version, proposal-params) -> {palette, grid, raw_cells,
+        # logits}; a tiny LRU so leash/smooth/consensus tweaks skip the net
+        self._proposals: OrderedDict = OrderedDict()
         self.lock = threading.Lock()  # one heavy compute at a time
         # (input content sha1, params json) -> payload; lives only as long
         # as the process — restarts start cold by design.
         self.cache: dict = {}
 
-    def current_ckpts(self) -> dict[str, Path]:
+    def local_ckpts(self) -> dict[str, Path]:
+        """Explicitly-pinned (--model) plus locally-discovered run
+        checkpoints (name -> path). With ckpt_scan set, a training run that
+        finishes appears here without a restart."""
         if self.ckpt_scan and self.ckpt_scan.is_dir():
-            for p in sorted(self.ckpt_scan.glob("*/best.ckpt")):
-                self.ckpts.setdefault(p.parent.name, p)
+            from ai2pixelart.models import discover_runs
+
+            for name, p in discover_runs(self.ckpt_scan).items():
+                self.ckpts.setdefault(name, p)
         return self.ckpts
 
+    def served_models(self) -> list[str]:
+        """Model names offered in the viewer: local runs (for development)
+        plus registered hub models, local winning on a name collision."""
+        from ai2pixelart.models import REGISTRY
+
+        names = set(self.local_ckpts())
+        names |= {n for n, s in REGISTRY.items() if s.repo_id}
+        return sorted(names)
+
     def ckpt_version(self, name: str | None) -> str:
-        """Identity of the checkpoint file a model name resolves to. Part of
-        the run-cache key: a retrained/overwritten best.ckpt must not serve
-        results computed with the old weights."""
-        ckpts = self.current_ckpts()
-        if not ckpts:
+        """Identity of the checkpoint a model name resolves to. Part of the
+        run-cache key so retrained (local) or updated (hub) weights don't
+        serve stale results. Never triggers a download — a hub model's
+        version is its pinned revision, known from the registry."""
+        names = self.served_models()
+        if not names:
             return ""
-        name = name or next(iter(ckpts))
-        path = ckpts.get(name)
-        return f"{name}:{path.stat().st_mtime_ns}" if path and path.exists() else str(name)
+        name = name or names[0]
+        local = self.local_ckpts()
+        if name in local and local[name].exists():
+            return f"{name}:{local[name].stat().st_mtime_ns}"  # mtime -> reload on retrain
+        from ai2pixelart.models import REGISTRY
+
+        spec = REGISTRY.get(name)
+        if spec and spec.repo_id:
+            return f"{name}:{spec.revision or spec.filename}"  # stable
+        return str(name)
 
     def nn_bits(self, name: str | None):
         """(model, device) for a net variant, loading it on first use and
-        RELOADING when the checkpoint file changes (an in-progress training
-        run overwrites best.ckpt at every improved validation)."""
-        ckpts = self.current_ckpts()
-        if not ckpts:
+        RELOADING when its checkpoint changes. A local run reloads when its
+        best.* file's mtime moves (in-progress training); a registered hub
+        model is downloaded on first use and cached by its pinned revision."""
+        names = self.served_models()
+        if not names:
             return None, "cpu"
-        name = name or next(iter(ckpts))
-        if name not in ckpts:
-            raise AppError(f"unknown neural model: {name!r} (have {sorted(ckpts)})")
-        mtime = ckpts[name].stat().st_mtime_ns
-        cached = self._nn_models.get(name)
-        if cached is None or cached[0] != mtime:
-            import torch
+        name = name or names[0]
+        local = self.local_ckpts()
+        if name in local:
+            path = local[name]
+            key = f"mtime:{path.stat().st_mtime_ns}"
+        else:
+            from ai2pixelart.models import REGISTRY, ModelNotAvailable, download_model
 
+            spec = REGISTRY.get(name)
+            if not (spec and spec.repo_id):
+                raise AppError(f"unknown neural model: {name!r} (have {names})")
+            try:
+                path = download_model(name)  # cached after first fetch
+            except ModelNotAvailable as e:
+                raise AppError(str(e))
+            key = f"rev:{spec.revision or spec.filename}"
+
+        cached = self._nn_models.get(name)
+        if cached is None or cached[0] != key:
+            from ai2pixelart.models import resolve_device
             from ai2pixelart.nninfer import load_checkpoint
 
-            self._nn_device = "cuda" if torch.cuda.is_available() else "cpu"
-            self._nn_models[name] = (mtime, load_checkpoint(ckpts[name], device=self._nn_device))
+            self._nn_device = resolve_device(self._device_pref)
+            self._nn_models[name] = (key, load_checkpoint(path, device=self._nn_device))
         return self._nn_models[name][1], self._nn_device
 
     def image_path(self, name: str) -> Path:
@@ -286,21 +337,19 @@ class ViewerApp:
 
     def run_clean(self, name: str, params: dict | None) -> dict:
         raw = self.image_path(name).read_bytes()
-        version = ""
-        if (params or {}).get("method") == "nn":
-            version = self.ckpt_version((params or {}).get("model"))
-        key = (
-            hashlib.sha1(raw).hexdigest(),
-            json.dumps(params or {}, sort_keys=True) + version,
-        )
+        params = params or {}
+        is_nn = params.get("method") == "nn"
+        sha1 = hashlib.sha1(raw).hexdigest()
+        version = self.ckpt_version(params.get("model")) if is_nn else ""
+        key = (sha1, json.dumps(params, sort_keys=True) + version)
         if key in self.cache:
             return self.cache[key]
         img = np.array(Image.open(io.BytesIO(raw)).convert("RGB"))
-        nn_model, nn_device = (None, "cpu")
-        if (params or {}).get("method") == "nn":
-            nn_model, nn_device = self.nn_bits((params or {}).get("model"))
         with self.lock:
-            png, info = clean_with_info(img, params, nn_model=nn_model, nn_device=nn_device)
+            if is_nn:
+                png, info = self._nn_clean_with_info(img, params, sha1, version)
+            else:
+                png, info = clean_with_info(img, params)
         payload = {
             "image": "data:image/png;base64," + base64.b64encode(png).decode(),
             "info": info,
@@ -310,6 +359,43 @@ class ViewerApp:
             self.cache.pop(next(iter(self.cache)))
         self.cache[key] = payload
         return payload
+
+    def _nn_clean_with_info(self, img, params: dict, sha1: str, version: str):
+        """Neural clean reusing a cached proposal. The classical proposal and
+        the net's logits depend only on PROPOSAL_PARAM_KEYS (+ model), so a
+        leash/smooth/consensus change re-runs just the cheap finalize; the
+        reported time reflects that."""
+        from ai2pixelart.nninfer import nn_finalize, nn_propose
+
+        model, device = self.nn_bits(params.get("model"))
+        if model is None:
+            raise AppError("neural model not available — start `viewer` with --model")
+        parsed = _parse_params(params)
+        parsed.pop("method", None)
+        parsed.pop("model", None)
+        leash = parsed.pop("leash", None)
+        consensus = parsed.pop("consensus", False)
+        smooth = parsed.get("smooth", True)
+
+        pkey = (sha1, params.get("model") or "", version, json.dumps(
+            {k: params[k] for k in PROPOSAL_PARAM_KEYS if k in params}, sort_keys=True))
+        t0 = time.perf_counter()
+        prop = self._proposals.get(pkey)
+        if prop is None:
+            prop = nn_propose(img, model, device, **parsed)
+            self._proposals[pkey] = prop
+            while len(self._proposals) > PROPOSAL_CACHE_MAX:
+                self._proposals.popitem(last=False)
+        else:
+            self._proposals.move_to_end(pkey)
+        result = nn_finalize(img, prop, device, leash=leash, smooth=smooth, consensus=consensus)
+
+        info = _approach_info(result, img, time.perf_counter() - t0)
+        info["method"] = "nn"
+        info["model_step"] = getattr(model, "ckpt_step", None)
+        buf = io.BytesIO()
+        Image.fromarray(result.image).save(buf, format="PNG")
+        return buf.getvalue(), info
 
     def save_upload(self, name: str, data: str) -> dict:
         """Store a dropped/picked image in the workspace folder."""
@@ -338,7 +424,7 @@ class ViewerApp:
         return {"name": target.name}
 
 
-def make_server(directory: Path, port: int = 8412, ckpts: dict[str, Path] | None = None, ckpt_scan: Path | None = None):
+def make_server(directory: Path, port: int = 8412, ckpts: dict[str, Path] | None = None, ckpt_scan: Path | None = None, device: str = "auto"):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
@@ -369,11 +455,11 @@ def make_server(directory: Path, port: int = 8412, ckpts: dict[str, Path] | None
                     {"key": k, "label": v["label"], "params": v["params"]}
                     for k, v in APPROACHES.items()
                 ]
-                ckpts = app.current_ckpts()
-                for name in ckpts:
+                names = app.served_models()
+                for name in names:
                     presets.append({
                         "key": f"nn:{name}",
-                        "label": f"Neural ({name})",
+                        "label": f"Neural {name.title()}",
                         # leash 8: only near-ties of the pixel's nearest
                         # entry are choosable — guards large-palette
                         # extrapolation (orange can never become green)
@@ -384,7 +470,7 @@ def make_server(directory: Path, port: int = 8412, ckpts: dict[str, Path] | None
                     {
                         "images": app.list_images(),
                         "presets": presets,
-                        "nn_models": sorted(ckpts),
+                        "nn_models": names,
                     },
                 )
             elif path.startswith("/img/"):
@@ -421,12 +507,12 @@ def make_server(directory: Path, port: int = 8412, ckpts: dict[str, Path] | None
             pass  # keep the terminal quiet
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.app = ViewerApp(directory, ckpts=ckpts, ckpt_scan=ckpt_scan)
+    server.app = ViewerApp(directory, ckpts=ckpts, ckpt_scan=ckpt_scan, device=device)
     return server
 
 
-def serve(directory: Path, port: int = 8412, ckpts: dict[str, Path] | None = None, ckpt_scan: Path | None = None) -> None:
-    server = make_server(directory, port, ckpts=ckpts, ckpt_scan=ckpt_scan)
+def serve(directory: Path, port: int = 8412, ckpts: dict[str, Path] | None = None, ckpt_scan: Path | None = None, device: str = "auto") -> None:
+    server = make_server(directory, port, ckpts=ckpts, ckpt_scan=ckpt_scan, device=device)
     nn = f", neural models: {sorted(ckpts)}" if ckpts else ""
     print(f"serving {directory} at http://127.0.0.1:{port}/  (Ctrl-C to stop{nn})")
     try:

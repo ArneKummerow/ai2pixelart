@@ -75,11 +75,6 @@ def detail_retention(
     return {"n_details": n, "retained": retained, "rate": retained / n}
 
 
-def grid_pitch_error(estimated: float, true: float) -> float:
-    """Relative pitch error."""
-    return abs(estimated - true) / true
-
-
 def evaluate(pred: np.ndarray, gt: np.ndarray) -> dict:
     """Aggregate metric dict. A wrong output size is a failure mode we want
     recorded, not an exception, so cell metrics are skipped on mismatch."""
