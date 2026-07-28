@@ -39,6 +39,12 @@ remembering:
   plus a "champion veto" for decorative periodicity (scanlines out-scoring
   the true art grid). Tile-based arbitration was measured and rejected —
   square-tile votes vanish at 3×3 tiling and the z margins were too thin.
+  A later aspect-distortion fix: when the two axes' near-best sets share no
+  scale at all (one axis's fundamental crowded just under the rel_tol cut
+  by its own p/2 sub-harmonic), the independent fallback could pick
+  harmonically related pitches and distort the aspect 2:1; square
+  completion now rescores each candidate on the other axis first and lets
+  detectable completions compete as square pairs.
 - **Palette**: representatives must come from color-space *bins* (coverage),
   but each rep must be that bin's most frequent *exact* color — bin centers
   tint dominants 2–6 ΔE; global-frequency reps starve rare-but-distinct

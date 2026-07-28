@@ -68,6 +68,25 @@ def test_blurry_small_pitch_keeps_fine_grid(sprite):
         assert abs(g.x.pitch - 3.0) < 0.1
 
 
+def test_disjoint_near_best_sets_complete_to_square_pair():
+    """wrong_ratio.png (true grid ~11.4 square): x's fundamental 11.4 fell a
+    hair under the rel_tol cut, crowded out by its p/2 sub-harmonic 5.7,
+    while y's near-best set held only 11.4 — no square pair existed and the
+    independent fallback output a 2:1 aspect (90x180 for a square icon).
+    Square completion rescores each candidate on the other axis and lets
+    detectable completions compete as pairs."""
+    from pathlib import Path
+
+    from PIL import Image
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "wrong_ratio.png"
+    g = estimate_grid(np.array(Image.open(path).convert("RGB")))
+    assert g is not None
+    assert abs(g.y.pitch - 11.42) < 0.1
+    assert abs(g.x.pitch - 11.42) < 0.1
+    assert g.shape == (90, 90)
+
+
 def test_decorative_periodicity_does_not_own_the_grid():
     """04.png: horizontal scanlines create a strong y-comb at 3.58 that used
     to drag the chosen pair to 3.58x3.59 — halving output resolution and

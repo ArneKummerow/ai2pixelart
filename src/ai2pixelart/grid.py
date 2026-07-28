@@ -317,8 +317,11 @@ def estimate_grid(img: np.ndarray, **kwargs) -> Grid | None:
     p vs p/2 sub-harmonic rule, applied to pairs). This lets one confident
     axis veto the other axis's spurious scales, which otherwise make the
     grid too coarse (detail loss: a near-best 4.32 beating a higher-scoring
-    true 3.00 on blurry art) or distort the aspect. Without any square pair
-    the axes fall back to the independent largest-near-best rule.
+    true 3.00 on blurry art) or distort the aspect. When the near-best sets
+    share no scale, square completion is attempted first (each candidate
+    rescored on the other axis, detectable completions compete as pairs);
+    only if that also fails do the axes fall back to the independent
+    largest-near-best rule.
 
     Champion veto: decorative periodicity (scanlines, sprite-sheet frames)
     can own one axis's near-best set outright and drag the chosen pair to
@@ -332,9 +335,23 @@ def estimate_grid(img: np.ndarray, **kwargs) -> Grid | None:
     cx = _axis_candidates(img, 1, **kwargs)
     if cy is None or cx is None:
         return None
+    z_min = kwargs.get("z_min", Z_MIN)
     pairs = [
         (a, b) for a in cy[0] for b in cx[0] if abs(a[0] / b[0] - 1.0) <= 0.05
     ]
+    if not pairs:
+        # Disjoint near-best sets can still hide a square grid: one axis's
+        # fundamental may sit just under the other's rel_tol cut, crowded
+        # out by its own p/2 sub-harmonic (wrong_ratio.png: x's true 11.4
+        # scored 24.0 against a 24.5 cut while y offered ONLY 11.4 — the
+        # non-square fallback then output a 2:1 aspect). Complete each
+        # near-best pitch on the other axis by local rescoring; detectable
+        # completions compete as square pairs under the usual family rule.
+        for own, other, own_is_y in ((cy, cx, True), (cx, cy, False)):
+            for cand in own[0]:
+                comp = _rescore(other, cand[0])
+                if comp[1] >= z_min and abs(cand[0] / comp[0] - 1.0) <= 0.05:
+                    pairs.append((cand, comp) if own_is_y else (comp, cand))
     if pairs:
         champion = max(pairs, key=lambda p: p[0][1] + p[1][1])
         base = (champion[0][0] + champion[1][0]) / 2.0
@@ -350,7 +367,6 @@ def estimate_grid(img: np.ndarray, **kwargs) -> Grid | None:
     else:
         py, px = _largest(cy[0]), _largest(cx[0])
 
-    z_min = kwargs.get("z_min", Z_MIN)
     veto = None  # (champ z, own pick, completed pick, own axis is y?)
     for own, other, own_pick, is_y in ((cy, cx, py, True), (cx, cy, px, False)):
         champ = max(own[0], key=lambda t: t[1])
