@@ -62,7 +62,8 @@ approaches and every parameter.
   natural size.
 - **Fixed palette** (`palette`): explicit output palette as
   `#rrggbb,#rrggbb,...` (up to 256 entries, applies to both methods;
-  deduped at ΔE 2 server-side).
+  deduped at ΔE 2 server-side). The **⬆** button next to the field
+  imports one from a file — see [Palettes](#palettes) below.
 - **Denoise / De-speckle / Unify areas** (`denoise` / `smooth` /
   `consensus`): cell-color denoising, detail-guarded speckle removal,
   and global flat-color consensus (forces near-identical flat regions to
@@ -84,7 +85,7 @@ approaches and every parameter.
   `<source>.<preset>.<WxH>.png` (client-side, no server round-trip).
 - **🎨 palette popover** — exact distinct-color tally of the displayed
   image (client-side), total + top swatches with hex/share,
-  click-to-copy.
+  click-to-copy, and **⬇ export** of the whole palette (see below).
 - **? help** — in-app reference: what each approach does, every
   parameter's effect, and how to read the quality signals.
 - **▦ batch** — clean every image in the workspace with the current
@@ -99,6 +100,37 @@ whole net (the stats' time reflects this).
 - Recomputes show *in* the image: the stale output dims under a sliding
   progress bar until the new result lands. Errors turn the status line
   red.
+
+## Palettes
+
+Import and export are both client-side; no format ever reaches the server,
+which only ever sees the `#rrggbb,...` string of the fixed-palette
+parameter.
+
+**Export** — in the 🎨 popover: pick a format, hit **⬇ export**. It writes
+every distinct color of the output (the swatch grid shows at most 256 of
+them, the file has all), most-used first, as
+`<source>.<preset>.palette.<ext>`:
+
+| Format | What it is |
+| --- | --- |
+| PNG Image (1×/8×/32×) | one square swatch per color, that many pixels a side; wraps into rows past 256 colors |
+| PAL File (JASC) | `JASC-PAL` text, `r g b` per line (Paint Shop Pro, Aseprite, GrafX2) |
+| Photoshop ASE | Adobe Swatch Exchange, one RGB color block per entry |
+| Paint.net TXT | `;` comments plus one `AARRGGBB` per line |
+| GIMP GPL | `GIMP Palette` header, `r g b<TAB>hex` per line (GIMP, Krita, Aseprite) |
+| HEX File | bare `RRGGBB` per line (Lospec) |
+
+**Import** — the **⬆** button next to *fixed palette* reads all of those
+back (`.gpl`, `.pal` as JASC *or* Microsoft RIFF, `.ase`, `.txt`, `.hex`),
+plus any image: an image contributes its distinct colors in scan order,
+which reads back an exported PNG strip at any scale and also lifts a
+palette off a reference picture. Detection is by content (`ASEF`/`RIFF`
+magic, `JASC-PAL`/`GIMP Palette` header), so a mislabeled extension still
+works; unknown text is scanned for `#rrggbb` / `aarrggbb` tokens, then for
+`r g b` triplets. ASE entries in CMYK, Gray or Lab are converted to RGB.
+Duplicates are dropped, and anything past the first 256 colors is cut with
+a notice (the server's cap).
 
 ## Run stats
 

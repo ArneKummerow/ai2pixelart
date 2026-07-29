@@ -69,6 +69,8 @@
   .form .pair { display: flex; gap: 6px; align-items: center; min-width: 0; }
   .form .pair input[type=range] { flex: 1 1 40px; min-width: 30px; }
   .form .pair input[type=number] { flex: 0 0 56px; width: 56px; }
+  .form .pair input[type=text] { flex: 1 1 auto; min-width: 0; }
+  .form .pair button { flex: 0 0 auto; padding: 3px 8px; }
   .form .pair .granv { flex: 0 0 56px; text-align: center; color: #9fb0cc; }
   .form input:disabled { opacity: .35; }
   #paramsbox { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
@@ -93,6 +95,7 @@
 
   .colorpop { position: absolute; inset: 0; z-index: 8; background: rgba(10,12,16,.97); overflow: auto; padding: 12px; }
   .colorpop .cphead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #9fb0cc; }
+  .colorpop .cphead select { font-size: 11px; padding: 2px 4px; }
   .colorpop .cphead .x { margin-left: auto; background: none; border: none; color: #8a90a0; font-size: 15px; cursor: pointer; }
   .colorpop .cphead .x:hover { color: #f66; }
   .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
@@ -173,7 +176,7 @@ const OPTIONAL = [
 ];
 
 let IMAGES = [], PRESETS = [], NN_MODELS = [];
-let state = { image: null, preset: "classical", params: { ...DEFAULTS }, view: "single", left: true, right: true, leftW: 280, rightW: 330, zoomF: null };
+let state = { image: null, preset: "classical", params: { ...DEFAULTS }, view: "single", left: true, right: true, leftW: 280, rightW: 330, zoomF: null, palfmt: "png1" };
 let swap = false;
 let result = null;   // {image, info, key}
 let rt = { timer: null, token: 0, pending: false, error: null };
@@ -491,8 +494,14 @@ function renderParams() {
       </div>`);
   });
   f.insertAdjacentHTML("beforeend", `<label title="(palette) force this exact output palette — every cell becomes one of these colors; near-duplicate entries are merged; overrides the colors control">fixed palette</label>
-    <input type="text" placeholder="auto — or #rrggbb,#rrggbb,…" value="${state.params.palette || ""}"
-           style="font-size:11px" onchange="setParam('palette', this.value.trim())">`);
+    <div class="pair">
+      <input type="text" placeholder="auto — or #rrggbb,#rrggbb,…" value="${state.params.palette || ""}"
+             style="font-size:11px" onchange="setParam('palette', this.value.trim())">
+      <button title="import a palette file — .gpl, .pal, .ase, .txt, .hex, or any image (its distinct colors)"
+              onclick="this.nextElementSibling.click()">⬆</button>
+      <input type="file" hidden accept=".gpl,.pal,.ase,.txt,.hex,.png,.gif,.bmp,.webp,.jpg,.jpeg,image/*"
+             onchange="importPaletteFile(this.files[0]); this.value='';">
+    </div>`);
   f.insertAdjacentHTML("beforeend", `<label title="(denoise) median-filter each cell's pixels before reading its color — steadier flat areas on noisy input"><input type="checkbox" ${state.params.denoise ? "checked" : ""}
       onchange="setParam('denoise', this.checked)"> denoise</label>
     <label title="(smooth) removes single stray cells inside flat areas with a detail-guarded majority filter — isolated 1-px details survive"><input type="checkbox" ${state.params.smooth !== false ? "checked" : ""}
@@ -649,16 +658,26 @@ function renderStats() {
 
 // ---------- download + palette count ----------
 
-function downloadResult() {
-  if (!result) return;
-  const src = result.key.split("|")[0].replace(/\.[^.]+$/, "");
-  const tag = (state.preset || "custom").replace(/[^A-Za-z0-9._-]+/g, "-");
+function saveAs(href, filename, revoke) {
   const a = document.createElement("a");
-  a.href = result.image;
-  a.download = `${src}.${tag}.${result.info.out_w}x${result.info.out_h}.png`;
+  a.href = href;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
+  if (revoke) setTimeout(() => URL.revokeObjectURL(href), 2000);
+}
+function saveBlob(blob, filename) { saveAs(URL.createObjectURL(blob), filename, true); }
+
+// "<source>.<preset>" — the shared stem of every file this view hands out
+function outBaseName() {
+  const src = ((result ? result.key.split("|")[0] : state.image) || "palette").replace(/\.[^.]+$/, "");
+  return `${src}.${(state.preset || "custom").replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+}
+
+function downloadResult() {
+  if (!result) return;
+  saveAs(result.image, `${outBaseName()}.${result.info.out_w}x${result.info.out_h}.png`);
 }
 
 // ---------- batch: clean every workspace image with the current params ----------
@@ -723,11 +742,7 @@ function downloadBatchZip() {
     name: r.name.replace(/\.[^.]+$/, "") + "." + batchTag + ".png",
     bytes: b64ToBytes(r.image.split(",")[1]),
   }));
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(buildZip(files));
-  a.download = `ai2pixelart.${batchTag}.zip`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  saveBlob(buildZip(files), `ai2pixelart.${batchTag}.zip`);
 }
 
 function b64ToBytes(b64) {
@@ -803,7 +818,7 @@ async function toggleColors() {
   if (!img || !img.src || !result) return;
   const pop = document.createElement("div");
   pop.className = "colorpop";
-  const headHTML = t => `<div class="cphead">${t}
+  const headHTML = (t, tools = "") => `<div class="cphead">${t}${tools}
     <button class="x" title="close" onclick="this.closest('.colorpop').remove()">✕</button></div>`;
   pop.innerHTML = headHTML("counting…");
   center.appendChild(pop);
@@ -811,6 +826,8 @@ async function toggleColors() {
     const { entries, w, h } = await tallyColors(img);
     const pixels = w * h, MAX = 256;
     pop.dataset.total = entries.length;
+    // the output's palette, most-used first — what "export" writes out
+    outPalette = entries.map(([c]) => [(c >> 16) & 255, (c >> 8) & 255, c & 255]);
     const pct = n => { const v = 100 * n / pixels; return v >= 1 ? v.toFixed(0) + "%" : v >= 0.01 ? v.toFixed(2) + "%" : "<0.01%"; };
     const cells = entries.slice(0, MAX).map(([c, n]) => {
       const hex = "#" + c.toString(16).padStart(6, "0");
@@ -818,13 +835,264 @@ async function toggleColors() {
         onclick="navigator.clipboard && navigator.clipboard.writeText('${hex}')">
         <div class="c" style="background:${hex}"></div><div class="t">${hex} · ${pct(n)}</div></div>`;
     }).join("");
+    const tools = `<select title="palette export format" onchange="setPalFmt(this.value)">
+        ${PAL_FORMATS.map(([k, label]) => `<option value="${k}" ${palFmt() === k ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+      <button title="download all ${entries.length.toLocaleString()} colors in the selected format"
+              onclick="exportPalette()">⬇ export</button>`;
     pop.innerHTML =
-      headHTML(`<b style="color:#d7dae0">${entries.length.toLocaleString()}</b>&nbsp;distinct colors · ${w}×${h} px`) +
+      headHTML(`<b style="color:#d7dae0">${entries.length.toLocaleString()}</b>&nbsp;distinct colors · ${w}×${h} px`, tools) +
       `<div class="swatches">${cells}</div>` +
       (entries.length > MAX
-        ? `<div class="note">showing the ${MAX} most frequent · ${(entries.length - MAX).toLocaleString()} more</div>` : "");
+        ? `<div class="note">showing the ${MAX} most frequent · ${(entries.length - MAX).toLocaleString()} more (export writes all)</div>` : "");
   } catch (e) {
     pop.innerHTML = headHTML("error: " + e.message);
+  }
+}
+
+// ---------- palette import / export ----------
+// Both directions are client-side. Import fills the fixed-palette field from
+// any common palette file (or an image's distinct colors); export writes the
+// output palette shown in the 🎨 popover back out in the formats the pixel
+// art tools read. A palette is [[r,g,b], ...] in between.
+
+const PAL_FORMATS = [
+  ["png1", "PNG Image (1x)"],
+  ["png8", "PNG Image (8x)"],
+  ["png32", "PNG Image (32x)"],
+  ["pal", "PAL File (JASC)"],
+  ["ase", "Photoshop ASE"],
+  ["txt", "Paint.net TXT"],
+  ["gpl", "GIMP GPL"],
+  ["hex", "HEX File"],
+];
+const PAL_MAX = 256;      // the server's cap on a forced palette
+let outPalette = [];      // the 🎨 popover's tally, most-used color first
+
+function hex6(c) { return "#" + c.map(v => v.toString(16).padStart(2, "0")).join(""); }
+function u8(v) { return Math.max(0, Math.min(255, Math.round(v))); }
+function palFmt() { return PAL_FORMATS.some(([k]) => k === state.palfmt) ? state.palfmt : PAL_FORMATS[0][0]; }
+function setPalFmt(v) { state.palfmt = v; saveState(); }
+
+// ----- writers -----
+
+function palHEX(pal) { return pal.map(c => hex6(c).slice(1).toUpperCase()).join("\n") + "\n"; }
+
+function palGPL(pal, name) {
+  const rows = pal.map(c => c.map(v => String(v).padStart(3)).join(" ") + "\t" + hex6(c).slice(1).toUpperCase());
+  return ["GIMP Palette", "Name: " + name, "Columns: 16", "#", ...rows].join("\n") + "\n";
+}
+
+function palPaintNet(pal, name) {
+  const head = ["; paint.net palette — " + name, "; one AARRGGBB color per line"];
+  return [...head, ...pal.map(c => "FF" + hex6(c).slice(1).toUpperCase())].join("\r\n") + "\r\n";
+}
+
+// JASC-PAL (Paint Shop Pro): magic, format version, count, then "r g b" lines
+function palJASC(pal) {
+  return ["JASC-PAL", "0100", String(pal.length), ...pal.map(c => c.join(" "))].join("\r\n") + "\r\n";
+}
+
+// Adobe Swatch Exchange: "ASEF", version, block count, then one big-endian
+// color block per entry (DataView is big-endian by default, which is what
+// ASE wants — unlike the little-endian ZIP writer above).
+function palASE(pal) {
+  const blocks = pal.map(c => aseBlock(hex6(c).slice(1).toUpperCase(), c));
+  const head = new DataView(new ArrayBuffer(12));
+  [..."ASEF"].forEach((ch, i) => head.setUint8(i, ch.charCodeAt(0)));
+  head.setUint16(4, 1); head.setUint16(6, 0);        // version 1.0
+  head.setUint32(8, blocks.length);
+  return new Blob([head.buffer, ...blocks], { type: "application/octet-stream" });
+}
+
+function aseBlock(name, [r, g, b]) {
+  const n = name.length + 1;                          // UTF-16 units incl. the NUL
+  const len = 2 + 2 * n + 4 + 12 + 2;
+  const v = new DataView(new ArrayBuffer(6 + len));
+  v.setUint16(0, 0x0001);                             // block type: color entry
+  v.setUint32(2, len);
+  v.setUint16(6, n);
+  let o = 8;
+  for (const ch of name) { v.setUint16(o, ch.charCodeAt(0)); o += 2; }
+  o += 2;                                             // name NUL terminator
+  for (const ch of "RGB ") v.setUint8(o++, ch.charCodeAt(0));
+  v.setFloat32(o, r / 255); v.setFloat32(o + 4, g / 255); v.setFloat32(o + 8, b / 255);
+  v.setUint16(o + 12, 2);                             // color type: normal
+  return new Uint8Array(v.buffer);
+}
+
+// one square swatch per color, `scale` px a side. Palettes wider than PAL_MAX
+// wrap into rows so no canvas dimension explodes; an import reads any scale
+// back in the same (row-major) order.
+function palPNG(pal, scale) {
+  const cols = Math.min(pal.length, PAL_MAX);
+  const cv = document.createElement("canvas");
+  cv.width = cols * scale;
+  cv.height = Math.ceil(pal.length / cols) * scale;
+  const cx = cv.getContext("2d");
+  pal.forEach((c, i) => {
+    cx.fillStyle = hex6(c);
+    cx.fillRect((i % cols) * scale, Math.floor(i / cols) * scale, scale, scale);
+  });
+  return new Promise(ok => cv.toBlob(ok, "image/png"));
+}
+
+async function exportPalette() {
+  if (!outPalette.length) return;
+  const pal = outPalette, fmt = palFmt(), base = outBaseName() + ".palette";
+  if (fmt.startsWith("png")) {
+    const scale = +fmt.slice(3);
+    saveBlob(await palPNG(pal, scale), `${base}.${scale}x.png`);
+    return;
+  }
+  const [data, ext] = {
+    pal: () => [palJASC(pal), "pal"],
+    ase: () => [palASE(pal), "ase"],
+    txt: () => [palPaintNet(pal, base), "txt"],
+    gpl: () => [palGPL(pal, base), "gpl"],
+    hex: () => [palHEX(pal), "hex"],
+  }[fmt]();
+  saveBlob(data instanceof Blob ? data : new Blob([data], { type: "text/plain" }), `${base}.${ext}`);
+}
+
+// ----- readers -----
+
+async function importPaletteFile(file) {
+  if (!file) return;
+  try {
+    let pal = await readPalette(file);
+    const seen = new Set();
+    pal = pal.filter(c => { const k = String(c); if (seen.has(k)) return false; seen.add(k); return true; });
+    if (pal.length < 2) throw new Error(`${file.name} has ${pal.length} color(s) — a palette needs at least 2`);
+    if (pal.length > PAL_MAX) {
+      alert(`${file.name} has ${pal.length} colors — keeping the first ${PAL_MAX} (the palette limit).`);
+      pal = pal.slice(0, PAL_MAX);
+    }
+    setParam("palette", pal.map(hex6).join(","));
+    renderParams();
+  } catch (e) {
+    alert("palette import failed — " + e.message);
+  }
+}
+
+async function readPalette(file) {
+  if (/^image\//.test(file.type) || /\.(png|gif|bmp|webp|jpe?g)$/i.test(file.name)) return paletteFromImage(file);
+  const buf = await file.arrayBuffer();
+  const v = new DataView(buf);
+  if (tag4(v, 0) === "ASEF") return parseASE(v);
+  if (tag4(v, 0) === "RIFF") return parseRIFFPal(v);   // the other kind of .pal
+  const pal = parsePaletteText(new TextDecoder().decode(buf));
+  if (!pal.length) throw new Error(`no colors found in ${file.name}`);
+  return pal;
+}
+
+function tag4(v, o) {
+  if (o + 4 > v.byteLength) return "";
+  return String.fromCharCode(v.getUint8(o), v.getUint8(o + 1), v.getUint8(o + 2), v.getUint8(o + 3));
+}
+
+// JASC .pal and GIMP .gpl list "r g b" per line; everything else (paint.net
+// .txt with AARRGGBB, .hex, a pasted "#rrggbb,…") is scanned for hex tokens.
+function parsePaletteText(text) {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const head = (lines[0] || "").trim().toLowerCase();
+  if (head.startsWith("jasc-pal") || head.startsWith("gimp palette")) return parseTripletLines(lines);
+  const hexes = parseHexTokens(text);
+  return hexes.length ? hexes : parseTripletLines(lines);
+}
+
+function parseTripletLines(lines) {
+  const out = [];
+  for (const line of lines) {
+    const m = /^\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/.exec(line);
+    if (m) out.push([u8(+m[1]), u8(+m[2]), u8(+m[3])]);
+  }
+  return out;
+}
+
+function parseHexTokens(text) {
+  const out = [];
+  for (const tok of text.replace(/^[ \t]*;.*$/gm, "").split(/[^0-9a-fA-F]+/)) {
+    const h = tok.length === 8 ? tok.slice(2) : tok.length === 6 ? tok : null;  // 8 = paint.net AARRGGBB
+    if (h) out.push([0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)));
+  }
+  return out;
+}
+
+function parseASE(v) {
+  const out = [];
+  let o = 12;
+  for (let i = 0, n = v.getUint32(8); i < n && o + 6 <= v.byteLength; i++) {
+    const type = v.getUint16(o), len = v.getUint32(o + 2);
+    if (o + 6 + len > v.byteLength) break;            // truncated file: keep what parsed
+    if (type === 0x0001) {                            // color entry (groups are skipped)
+      let p = o + 6;
+      p += 2 + 2 * v.getUint16(p);                    // past the UTF-16 name
+      const f = k => v.getFloat32(p + 4 + 4 * k);     // channels follow the 4-char model
+      const model = tag4(v, p);
+      if (model === "RGB ") out.push([0, 1, 2].map(k => u8(f(k) * 255)));
+      else if (model === "CMYK") out.push([0, 1, 2].map(k => u8(255 * (1 - f(k)) * (1 - f(3)))));
+      else if (model.toUpperCase() === "GRAY") out.push([0, 0, 0].map(() => u8(f(0) * 255)));
+      else if (model === "LAB ") out.push(labToRGB(f(0) * 100, f(1), f(2)));
+    }
+    o += 6 + len;
+  }
+  return out;
+}
+
+// ASE stores Lab against D50, the way Photoshop writes it
+function labToRGB(L, a, b) {
+  const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - b / 200;
+  const inv = t => (t ** 3 > 0.008856 ? t ** 3 : (116 * t - 16) / 903.3);
+  const X = inv(fx) * 0.9642, Y = inv(fy), Z = inv(fz) * 0.8249;
+  return [
+    3.1338561 * X - 1.6168667 * Y - 0.4906146 * Z,
+    -0.9787684 * X + 1.9161415 * Y + 0.0334540 * Z,
+    0.0719453 * X - 0.2289914 * Y + 1.4052427 * Z,
+  ].map(c => u8(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055)));
+}
+
+// Microsoft RIFF .pal: chunks, with the entries in "data" as r,g,b,flags
+function parseRIFFPal(v) {
+  let o = 12;
+  while (o + 8 <= v.byteLength) {
+    const id = tag4(v, o), size = v.getUint32(o + 4, true);
+    if (id === "data") {
+      if (o + 12 > v.byteLength) break;
+      const n = v.getUint16(o + 10, true), out = [];
+      for (let i = 0; i < n && o + 12 + 4 * i + 3 <= v.byteLength; i++) {
+        const p = o + 12 + 4 * i;
+        out.push([v.getUint8(p), v.getUint8(p + 1), v.getUint8(p + 2)]);
+      }
+      return out;
+    }
+    o += 8 + size + (size & 1);
+  }
+  return [];
+}
+
+// any image: its distinct colors in scan order — this is what reads an
+// exported PNG strip back in, and pulls a palette off a reference image
+async function paletteFromImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const cv = document.createElement("canvas");
+    cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+    const cx = cv.getContext("2d", { willReadFrequently: true });
+    cx.drawImage(img, 0, 0);
+    const d = cx.getImageData(0, 0, cv.width, cv.height).data;
+    const seen = new Set(), out = [];
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 8) continue;                     // transparent padding
+      const k = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+      if (!seen.has(k)) { seen.add(k); out.push([d[i], d[i + 1], d[i + 2]]); }
+    }
+    return out;
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -903,7 +1171,13 @@ merges them.</dd>
 <dd>Forces the exact output palette (hex colors, comma-separated, up to
 256): every cell becomes one of these colors, with both approaches.
 Near-duplicate entries are merged automatically. Note that colors genuinely
-missing from the palette cannot be represented well by any method.</dd>
+missing from the palette cannot be represented well by any method.
+The <b>⬆</b> button next to the field imports a palette file —
+<code>.gpl</code> (GIMP), <code>.pal</code> (JASC or RIFF),
+<code>.ase</code> (Photoshop), <code>.txt</code> (paint.net),
+<code>.hex</code>, or any image, whose distinct colors become the palette
+(a palette strip exported below, or a reference picture). Everything past
+the first 256 colors is dropped.</dd>
 <dt>denoise</dt>
 <dd>Median-filters each cell's pixels before reading its color — steadier
 flat areas on noisy input, at a small cost in edge sharpness.</dd>
@@ -918,6 +1192,14 @@ entry across the whole image. Fixes far-apart flat regions (e.g. the
 background of separate tiles) landing on different, randomly-decided
 shades. Real color variation stays untouched.</dd>
 </dl>
+
+<h3>Palettes in and out</h3>
+<p>The 🎨 popover lists the output's exact colors and exports them as a
+<b>PNG</b> strip (one square swatch per color at 1×, 8× or 32×), a
+<b>JASC .pal</b>, a <b>Photoshop .ase</b>, a <b>paint.net .txt</b>, a
+<b>GIMP .gpl</b> or a plain <b>.hex</b> list. The fixed-palette field reads
+all of those back in, so a palette can travel from one image to the next or
+into another editor and back.</p>
 
 <h3>Quality signals</h3>
 <p><b>residual ΔE</b> — the cleaned cells painted back onto the input grid,
