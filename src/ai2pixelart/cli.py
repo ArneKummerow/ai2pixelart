@@ -4,6 +4,7 @@
     ai2pixelart clean input.png -o out.png --approach robust  # neural
     ai2pixelart viewer my_images/                             # web workspace
     ai2pixelart inspect my_images/                            # quality check
+    ai2pixelart palette extract input.png -o pal.gpl          # palette files
     ai2pixelart data ...   |   ai2pixelart train ...          # data + training
 """
 
@@ -56,7 +57,15 @@ def main() -> None:
 @click.option("--colors", "max_colors", default=None, type=int,
               help="Palette size: exact target when the image has that many "
                    "distinguishable colors, cap otherwise (default: natural size).")
-@click.option("--palette", default=None, help="Force palette: '#rrggbb,#rrggbb,...'.")
+@click.option("--palette", default=None,
+              help="Force palette: '#rrggbb,#rrggbb,...' or a palette file "
+                   "(.gpl/.pal/.ase/.txt/.hex, or an image to take the colors of).")
+@click.option("--palette-out", default=None, type=click.Path(dir_okay=False),
+              help="Also write the palette the run used, e.g. pal.gpl — the "
+                   "extension picks the format (gpl, pal, ase, txt, hex, png). "
+                   "Batching writes one file per image, named after it.")
+@click.option("--palette-scale", default=1, show_default=True,
+              help="PNG palette output only: swatch size in pixels.")
 @click.option("--pitch", default=None, type=float,
               help="Known art-pixel size in image pixels (skips grid detection).")
 @click.option("--detail", "granularity", default=1.0, show_default=True,
@@ -77,21 +86,36 @@ def main() -> None:
               help="Neural only: 'auto' (GPU if available, else CPU), 'cuda', or 'cpu'.")
 @click.option("--preview-scale", default=0, type=int,
               help="Also write an Nx nearest-neighbor preview.")
-def clean_cmd(input_path, output_path, approach, max_colors, palette, pitch, granularity,
-              merge_de, leash, denoise, smooth, consensus, device, preview_scale):
+def clean_cmd(input_path, output_path, approach, max_colors, palette, palette_out,
+              palette_scale, pitch, granularity, merge_de, leash, denoise, smooth,
+              consensus, device, preview_scale):
     """Clean pseudo-pixel-art into true-resolution pixel art.
 
     INPUT is one image, or a folder to batch-clean (then OUTPUT is a folder
     and each image is written as <name>.png). Uses the classical pipeline by
     default (--approach simple); pass --approach <model> for a trained net."""
-    from ai2pixelart.palette import parse_hex_palette
+    from ai2pixelart.palettefile import (
+        MAX_COLORS,
+        PaletteFileError,
+        load_palette_spec,
+        resolve_format,
+        write_palette,
+    )
     from ai2pixelart.webapp import collect_sources
 
     sources = collect_sources(Path(input_path))
     if not sources:
         raise click.ClickException(f"no images found in {input_path}")
     batch = Path(input_path).is_dir()
-    pal = parse_hex_palette(palette) if palette else None
+    try:
+        pal = load_palette_spec(palette) if palette else None
+        if palette_out:  # fail before computing anything, not after
+            resolve_format(palette_out)
+    except PaletteFileError as e:
+        raise click.ClickException(str(e)) from None
+    if pal is not None and len(pal) > MAX_COLORS:
+        click.echo(f"palette has {len(pal)} colors - using the first {MAX_COLORS}", err=True)
+        pal = pal[:MAX_COLORS]
     pitch_pair = (pitch, pitch) if pitch else None
     shared = dict(
         merge_de=merge_de, max_colors=max_colors, palette=pal, pitch=pitch_pair,
@@ -142,11 +166,20 @@ def clean_cmd(input_path, output_path, approach, max_colors, palette, pitch, gra
         result = clean_one(_load(str(src)))
         dest = (Path(output_path) / f"{src.stem}.png") if batch else output_path
         out = _save_with_preview(str(dest), result.image, preview_scale)
+        pal_out = None
+        if palette_out:
+            # in batch, the given name supplies the folder and the format;
+            # each image gets its own file, named after it
+            dest_pal = Path(palette_out)
+            if batch:
+                dest_pal = dest_pal.with_name(f"{src.stem}{dest_pal.suffix}")
+            pal_out = str(write_palette(dest_pal, result.palette, scale=palette_scale))
         infos.append({
             "input": src.name,
             "method": method,
             "device": device_used,
             "output": str(out),
+            "palette_file": pal_out,
             "output_shape": list(result.image.shape[:2]),
             "palette_size": int(len(result.palette)),
             "grid": None if result.grid is None else {
@@ -238,6 +271,84 @@ def inspect_cmd(src, granularity, smooth):
             continue
         report = assess(img, result)
         click.echo(f"{path.stem:<12}" + "".join(f"{str(report[c]):>18}" for c in cols))
+
+
+@main.group("palette")
+def palette_grp() -> None:
+    """Palette files: extract one from an image, or convert between formats.
+
+    Reads and writes GIMP .gpl, JASC .pal, Photoshop .ase, paint.net .txt,
+    bare .hex lists and PNG swatch strips — the formats 'clean --palette'
+    and the viewer's palette import/export use, so a palette moves between
+    them and an external editor unchanged."""
+
+
+@palette_grp.command("extract")
+@click.argument("src", type=click.Path(exists=True, dir_okay=False))
+@click.option("-o", "--out", required=True, type=click.Path(dir_okay=False),
+              help="Palette file to write; its extension picks the format "
+                   "(gpl, pal, ase, txt, hex, png).")
+@click.option("--colors", "max_colors", default=None, type=int,
+              help="Palette size: exact target when the image has that many "
+                   "distinguishable colors, cap otherwise (default: natural size).")
+@click.option("--merge-de", default=3.0, show_default=True,
+              help="Palette merge threshold (CIE76 ΔE); higher merges more shades.")
+@click.option("--pitch", default=None, type=float,
+              help="Known art-pixel size in image pixels (skips grid detection).")
+@click.option("--detail", "granularity", default=1.0, show_default=True,
+              help="Sampling resolution relative to the detected grid.")
+@click.option("--distinct", is_flag=True,
+              help="Tally the image's exact distinct colors instead, most "
+                   "frequent first (for art that is already pixel-perfect).")
+@click.option("--scale", default=1, show_default=True,
+              help="PNG output only: swatch size in pixels.")
+def palette_extract_cmd(src, out, max_colors, merge_de, pitch, granularity, distinct, scale):
+    """Extract SRC's palette into a palette file.
+
+    By default this is the palette the cleaner itself would use — the
+    classical proposal, shaped by --colors/--merge-de/--pitch/--detail
+    exactly as in 'clean'. That is the useful answer on a raw AI image,
+    whose exact color tally runs into the thousands; --distinct gives that
+    tally instead, which is what you want for already-clean art."""
+    from ai2pixelart.palette import image_palette
+    from ai2pixelart.palettefile import PaletteFileError, write_palette
+
+    img = _load(src)
+    if distinct:
+        pal = image_palette(img)
+    else:
+        from ai2pixelart.pipeline import clean
+
+        pal = clean(img, max_colors=max_colors, merge_de=merge_de,
+                    pitch=(pitch, pitch) if pitch else None,
+                    granularity=granularity).palette
+    try:
+        path = write_palette(out, pal, scale=scale)
+    except PaletteFileError as e:
+        raise click.ClickException(str(e)) from None
+    click.echo(f"{len(pal)} colors -> {path}")
+
+
+@palette_grp.command("convert")
+@click.argument("src", type=click.Path(exists=True, dir_okay=False))
+@click.option("-o", "--out", required=True, type=click.Path(dir_okay=False),
+              help="Palette file to write; its extension picks the format.")
+@click.option("--scale", default=1, show_default=True,
+              help="PNG output only: swatch size in pixels.")
+def palette_convert_cmd(src, out, scale):
+    """Convert a palette file into another format.
+
+    SRC may be any format the reader knows: .gpl, .pal (JASC or Microsoft
+    RIFF), .ase, .txt, .hex, or an image — an image contributes its distinct
+    colors in scan order, which also reads back an exported PNG strip."""
+    from ai2pixelart.palettefile import PaletteFileError, read_palette, write_palette
+
+    try:
+        pal = read_palette(src)
+        path = write_palette(out, pal, scale=scale)
+    except PaletteFileError as e:
+        raise click.ClickException(str(e)) from None
+    click.echo(f"{len(pal)} colors -> {path}")
 
 
 @main.command("eval")

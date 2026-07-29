@@ -7,6 +7,7 @@
 | `grid.py` | Grid pitch/phase estimation (FFT candidates + Rayleigh scoring, joint square-pair selection, champion veto), boundary refinement, `regrain` (granularity) |
 | `palette.py` | Palette extraction (Lab agglomerative, coverage bins, mode centroids, absorption, dead-entry reseeding), quantization, `dedupe_palette`, hex parsing |
 | `pipeline.py` | Classical cleaner: grid → cell sampling → palette → assignment → `smooth_indices` → optional `consensus_indices`; `CleanResult` |
+| `palettefile.py` | Palette interchange files (`read_palette`/`write_palette`): GIMP `.gpl`, JASC `.pal`, Adobe `.ase`, paint.net `.txt`, `.hex`, PNG swatch strips; reads Microsoft RIFF `.pal` and any image too, format by content before extension |
 | `metrics.py` | Ground-truth metrics: cell accuracy (exact/tolerant), palette fidelity, detail retention |
 | `autoqa.py` | No-ground-truth QA (`inspect` CLI): boundary SNR, tile-wise pitch consistency, cell fit mean/p95, speckle rate, shade flicker, detail survival |
 | `models.py` | Model registry (`ModelSpec`/`REGISTRY`), approach → checkpoint resolution (`resolve_checkpoint`, `discover_runs`), and checkpoint format (safetensors save/load/convert; legacy `.ckpt` still loads) |

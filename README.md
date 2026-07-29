@@ -38,10 +38,18 @@ download` pre-fetches them for offline use).
 ai2pixelart clean input.png -o out.png --preview-scale 8         # classical
 ai2pixelart clean input.png -o out.png --approach robust         # neural
 ai2pixelart clean input.png -o out.png --palette "#1e2234,#5ea740,#f0f0f0"
+ai2pixelart clean input.png -o out.png --palette pal.gpl --palette-out used.hex
 ai2pixelart clean my_images/ -o out_dir/ --approach robust       # batch a folder
+ai2pixelart palette extract input.png -o pal.gpl --colors 16     # palette files
+ai2pixelart palette convert pal.gpl -o pal.png --scale 32
 ai2pixelart inspect my_images/            # no-ground-truth quality table
 ai2pixelart viewer my_images/             # interactive web workspace, port 8412
 ```
+
+Palettes move in and out as files, in the CLI and the viewer alike: GIMP
+`.gpl`, JASC `.pal`, Photoshop `.ase`, paint.net `.txt`, plain `.hex`
+lists and PNG swatch strips (`--scale` sets the swatch size). `--palette`
+also accepts any image, whose colors then become the forced palette.
 
 Neural inference uses the GPU automatically when one is available and falls
 back to CPU otherwise; force it either way with `--device cpu` / `--device
@@ -52,7 +60,8 @@ large images or batches).
 under `runs/` (`robust`, `detail`) or a path to a `.safetensors`/`.ckpt`
 file. Run
 `ai2pixelart --help` to see the full command tree (`clean`, `viewer`,
-`inspect`, `eval`, `demo`, plus `data …` and `train …` for the pipeline).
+`inspect`, `palette`, `eval`, `demo`, plus `data …` and `train …` for the
+pipeline).
 
 ## How it works
 

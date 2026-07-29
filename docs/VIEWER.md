@@ -132,6 +132,10 @@ works; unknown text is scanned for `#rrggbb` / `aarrggbb` tokens, then for
 Duplicates are dropped, and anything past the first 256 colors is cut with
 a notice (the server's cap).
 
+The CLI speaks the same formats — `ai2pixelart palette extract`/`convert`,
+and `clean --palette <file>` / `--palette-out <file>` — so a palette moves
+between the viewer, the CLI and an external editor unchanged.
+
 ## Run stats
 
 Estimated pitch, detection z, palette size, runtime, plus two honesty
